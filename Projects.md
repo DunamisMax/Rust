@@ -1,5 +1,3 @@
-It depends on what motivates you most and what new skills you want to explore in Rust. If you’re looking for more CLI practice, here are a few ideas, each covering different aspects of Rust’s ecosystem:
-
 1. **CLI for Fetching API Data (Stocks, Crypto, or News)**
    - **Overview**: Similar to your weather CLI, but targeting a different public API—like a news service or a stock/crypto price feed.
    - **Key Skills**: Learn to manage HTTP requests with [`reqwest`](https://crates.io/crates/reqwest), handle JSON with [`serde`](https://crates.io/crates/serde), configure concurrency (e.g., using [`tokio`](https://crates.io/crates/tokio) for async fetch calls).
