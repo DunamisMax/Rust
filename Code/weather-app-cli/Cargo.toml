@@ -1,0 +1,12 @@
+[package]
+name = "weather-cli"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+reqwest = { version = "*", features = ["blocking", "json"] }
+serde = { version = "*", features = ["derive"] }
+serde_json = "*"
+anyhow = "*"
+dotenv = "*"
+chrono = "*"
