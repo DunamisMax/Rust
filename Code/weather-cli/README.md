@@ -108,7 +108,7 @@ Sunset (UTC): 2024-12-28 15:54:00 UTC
 
 ## Project Structure
 
-```
+```bash
 weather-cli
 ├── Cargo.toml
 ├── .gitignore
