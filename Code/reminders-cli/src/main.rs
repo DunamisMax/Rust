@@ -16,10 +16,10 @@ const REMINDERS_FILE: &str = ".reminders.json";
 /// Each reminder we store in our JSON file.
 #[derive(Debug, Serialize, Deserialize, Clone)]
 struct Reminder {
-    id: usize,                     // A unique ID
-    title: String,                 // The reminder text or title
-    due: Option<DateTime<Local>>,  // Optional due date/time
-    completed: bool,               // Whether the reminder is completed
+    id: usize,                    // A unique ID
+    title: String,                // The reminder text or title
+    due: Option<DateTime<Local>>, // Optional due date/time
+    completed: bool,              // Whether the reminder is completed
 }
 
 /// The main CLI arguments parser.
@@ -72,15 +72,16 @@ fn main() -> Result<()> {
     match cli.command {
         Commands::Add { title, due } => {
             // Try parsing due date if provided.
-            let parsed_due = match due {
-                Some(due_str) => {
-                    // We’ll support multiple common formats for convenience.
-                    Some(parse_datetime(&due_str).with_context(|| {
-                        format!("Failed to parse due date/time: '{}'", due_str)
-                    })?)
-                }
-                None => None,
-            };
+            let parsed_due =
+                match due {
+                    Some(due_str) => {
+                        // We’ll support multiple common formats for convenience.
+                        Some(parse_datetime(&due_str).with_context(|| {
+                            format!("Failed to parse due date/time: '{}'", due_str)
+                        })?)
+                    }
+                    None => None,
+                };
 
             add_reminder(&mut reminders, title, parsed_due)?;
             println!("Reminder added successfully!");
@@ -140,7 +141,6 @@ fn parse_datetime(input: &str) -> anyhow::Result<DateTime<Local>> {
     anyhow::bail!("Could not parse date/time string: {}", input);
 }
 
-
 /// Load reminders from a JSON file in the user's home directory.
 /// If no file exists, return an empty vector.
 fn load_reminders() -> Result<Vec<Reminder>> {
@@ -151,8 +151,8 @@ fn load_reminders() -> Result<Vec<Reminder>> {
         return Ok(Vec::new());
     }
 
-    let file = File::open(&file_path)
-        .with_context(|| format!("Unable to open file {:?}", file_path))?;
+    let file =
+        File::open(&file_path).with_context(|| format!("Unable to open file {:?}", file_path))?;
     let reader = BufReader::new(file);
 
     let reminders = serde_json::from_reader(reader)
@@ -183,7 +183,11 @@ fn get_reminders_file_path() -> Result<PathBuf> {
 }
 
 /// Add a new reminder to the list, assigning it a unique ID.
-fn add_reminder(reminders: &mut Vec<Reminder>, title: String, due: Option<DateTime<Local>>) -> Result<()> {
+fn add_reminder(
+    reminders: &mut Vec<Reminder>,
+    title: String,
+    due: Option<DateTime<Local>>,
+) -> Result<()> {
     // We can auto-generate a unique ID by taking the max existing ID and adding 1.
     let new_id = reminders.iter().map(|r| r.id).max().unwrap_or(0) + 1;
 
