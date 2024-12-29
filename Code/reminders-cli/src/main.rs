@@ -203,7 +203,7 @@ fn add_reminder(
 }
 
 /// Mark a reminder as completed by its ID.
-fn mark_done(reminders: &mut Vec<Reminder>, id: usize) -> Result<()> {
+fn mark_done(reminders: &mut [Reminder], id: usize) -> Result<()> {
     let reminder = reminders
         .iter_mut()
         .find(|r| r.id == id)
