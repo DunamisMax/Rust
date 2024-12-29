@@ -138,4 +138,4 @@ This project is licensed under the [MIT License](LICENSE). Feel free to use, mod
 
 ---
 
-**Enjoy fetching weather data in Rust!** If you find any issues or have suggestions for improvement, please open an [issue](https://github.com/your-username/weather-cli/issues) or submit a pull request.
+**Enjoy fetching weather data in Rust!** If you have questions or ideas for improvements, please open an issue or submit a PR.

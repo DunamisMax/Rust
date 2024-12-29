@@ -24,8 +24,8 @@ It stores reminders in a JSON file in your home directory and lets you list, add
 1. **Clone** the repository:
 
    ```bash
-   git clone https://github.com/<yourusername>/reminders-cli.git
-   cd reminders-cli
+   git clone https://github.com/dunamismax/Rust.git
+   cd /Rust/Code/reminders-cli
    ```
 
 2. **Build and install** the CLI tool:
