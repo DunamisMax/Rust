@@ -1,12 +1,12 @@
 use std::{
     fs::{File, OpenOptions},
-    io::{BufReader, BufWriter},
+    io::{stdin, stdout, BufReader, BufWriter, Write},
     path::PathBuf,
 };
 
 use anyhow::{Context, Result};
-use chrono::{DateTime, Local, NaiveDateTime, TimeZone}; // <-- We import `TimeZone` here
-use clap::{Parser, Subcommand};
+use chrono::{DateTime, Local, NaiveDateTime, TimeZone};
+use colored::*;
 use dirs::home_dir;
 use serde::{Deserialize, Serialize};
 
@@ -22,87 +22,228 @@ struct Reminder {
     completed: bool,              // Whether the reminder is completed
 }
 
-/// The main CLI arguments parser.
-#[derive(Debug, Parser)]
-#[command(name = "reminders")]
-#[command(about = "A simple CLI Reminders application in Rust!", long_about = None)]
-struct Cli {
-    /// The subcommand to run (e.g., `add`, `list`, `done`, `remove`)
-    #[command(subcommand)]
-    command: Commands,
-}
-
-#[derive(Debug, Subcommand)]
-enum Commands {
-    /// Add a new reminder (e.g. `reminders add "Buy milk" --due "2024-12-29 10:00"`)
-    Add {
-        /// Title of the reminder
-        title: String,
-        /// Optional due date/time (in RFC3339 or "YYYY-MM-DD HH:MM" format, e.g. "2024-12-29 10:00")
-        #[arg(short, long)]
-        due: Option<String>,
-    },
-    /// Mark a reminder as completed by its ID
-    Done {
-        /// ID of the reminder to mark done
-        id: usize,
-    },
-    /// Remove a reminder by its ID
-    Remove {
-        /// ID of the reminder to remove
-        id: usize,
-    },
-    /// List reminders (by default, lists only outstanding ones; use `--all` to show completed too)
-    List {
-        /// Show all reminders, including completed
-        #[arg(short, long)]
-        all: bool,
-    },
-    /// Clear all completed reminders
-    ClearCompleted,
-}
-
 fn main() -> Result<()> {
-    let cli = Cli::parse();
+    // Print a welcome banner with some ASCII styling.
+    print_banner();
 
-    // 1. Load existing reminders from file (or create an empty file if none exists).
+    // Load existing reminders from file (or create an empty file if none exists).
     let mut reminders = load_reminders()?;
 
-    // 2. Handle subcommands.
-    match cli.command {
-        Commands::Add { title, due } => {
-            // Try parsing due date if provided.
-            let parsed_due =
-                match due {
-                    Some(due_str) => {
-                        // We’ll support multiple common formats for convenience.
-                        Some(parse_datetime(&due_str).with_context(|| {
-                            format!("Failed to parse due date/time: '{}'", due_str)
-                        })?)
-                    }
-                    None => None,
-                };
+    // Start the interactive menu loop.
+    menu_loop(&mut reminders)?;
 
-            add_reminder(&mut reminders, title, parsed_due)?;
-            println!("Reminder added successfully!");
-        }
-        Commands::Done { id } => {
-            mark_done(&mut reminders, id)?;
-        }
-        Commands::Remove { id } => {
-            remove_reminder(&mut reminders, id)?;
-        }
-        Commands::List { all } => {
-            list_reminders(&reminders, all);
-        }
-        Commands::ClearCompleted => {
-            clear_completed(&mut reminders);
-            println!("All completed reminders cleared.");
+    Ok(())
+}
+
+/// The main loop that presents the user with menu options.
+fn menu_loop(reminders: &mut Vec<Reminder>) -> Result<()> {
+    loop {
+        println!("{}", "===== MAIN MENU =====".bright_white().bold());
+        println!("1) List all reminders");
+        println!("2) Add a new reminder");
+        println!("3) Mark a reminder as completed");
+        println!("4) Remove a reminder");
+        println!("5) Clear all completed reminders");
+        println!("6) Quit");
+        println!("{}", "=====================".bright_white().bold());
+
+        // Prompt user for choice
+        let choice = prompt("Enter a choice (1-6): ")?;
+
+        match choice.trim() {
+            "1" => list_reminders_interactive(reminders)?,
+            "2" => add_reminder_interactive(reminders)?,
+            "3" => mark_done_interactive(reminders)?,
+            "4" => remove_reminder_interactive(reminders)?,
+            "5" => {
+                clear_completed(reminders);
+                println!("{}", "All completed reminders cleared.".green().bold());
+                // Persist after clearing
+                save_reminders(reminders)?;
+            }
+            "6" => {
+                println!("{}", "Goodbye!".bright_blue().bold());
+                break;
+            }
+            _ => println!(
+                "{}",
+                "Invalid choice. Please enter a number between 1 and 6.".red()
+            ),
         }
     }
 
-    // 3. Persist updated reminders back to JSON file.
-    save_reminders(&reminders)?;
+    Ok(())
+}
+
+/// Helper function to print an ASCII-art banner to liven up the CLI.
+fn print_banner() {
+    let banner = r#"
+                        _             _                          _  _
+                       (_)           | |                        | |(_)
+ _ __   ___  _ __ ___   _  _ __    __| |  ___  _ __  ___    ___ | | _
+| '__| / _ \| '_ ` _ \ | || '_ \  / _` | / _ \| '__|/ __|  / __|| || |
+| |   |  __/| | | | | || || | | || (_| ||  __/| |   \__ \ | (__ | || |
+|_|    \___||_| |_| |_||_||_| |_| \__,_| \___||_|   |___/  \___||_||_|
+
+"#;
+
+    println!("{}", banner.bright_yellow().bold());
+}
+
+/// Helper function to prompt the user for input and read it from stdin.
+fn prompt(message: &str) -> Result<String> {
+    print!("{}", message);
+    stdout().flush().ok(); // Ensure the prompt is displayed immediately
+
+    let mut buffer = String::new();
+    stdin().read_line(&mut buffer)?;
+    Ok(buffer)
+}
+
+/// Presents all reminders (including completed) for the user to see.
+fn list_reminders_interactive(reminders: &[Reminder]) -> Result<()> {
+    if reminders.is_empty() {
+        println!("{}", "No reminders found.".yellow().bold());
+        return Ok(());
+    }
+
+    let mut to_list: Vec<&Reminder> = reminders.iter().collect();
+    // Sort by due date (Option sort—`None` goes last).
+    to_list.sort_by_key(|r| r.due.map(|dt| dt.timestamp()));
+
+    println!();
+    println!(
+        "{}",
+        format!("You have {} reminders in total:", to_list.len())
+            .bright_white()
+            .bold()
+    );
+
+    for reminder in to_list {
+        let due_str = match reminder.due {
+            Some(dt) => dt.format("%Y-%m-%d %H:%M").to_string(),
+            None => "No due date".to_string(),
+        };
+
+        let status = if reminder.completed {
+            format!("{}", "✔ DONE".green().bold())
+        } else {
+            format!("{}", "[ ]".yellow().bold())
+        };
+
+        println!(
+            "[{status}] {} | {} | {}",
+            format!("ID: {}", reminder.id).magenta().bold(),
+            format!("Title: {}", reminder.title).cyan().bold(),
+            format!("Due: {due_str}").blue()
+        );
+    }
+    println!();
+
+    Ok(())
+}
+
+/// Interactive function to add a new reminder by prompting user for a title and optional due date.
+fn add_reminder_interactive(reminders: &mut Vec<Reminder>) -> Result<()> {
+    println!("{}", "\n--- Add a New Reminder ---".bright_white().bold());
+
+    let title = prompt("Enter the reminder title: ")?;
+    if title.trim().is_empty() {
+        println!("{}", "Title cannot be empty.".red());
+        return Ok(());
+    }
+
+    let due_input = prompt("Enter a due date/time (optional, e.g. '2024-12-29 10:00'): ")?;
+
+    // Attempt to parse the due date/time if provided.
+    let parsed_due = if due_input.trim().is_empty() {
+        None
+    } else {
+        match parse_datetime(due_input.trim()) {
+            Ok(dt) => Some(dt),
+            Err(e) => {
+                println!("{}", format!("Invalid date/time: {}", e).red());
+                return Ok(());
+            }
+        }
+    };
+
+    // Generate a new ID
+    let new_id = reminders.iter().map(|r| r.id).max().unwrap_or(0) + 1;
+    let reminder = Reminder {
+        id: new_id,
+        title: title.trim().to_string(),
+        due: parsed_due,
+        completed: false,
+    };
+
+    reminders.push(reminder);
+    save_reminders(reminders)?; // Persist the addition immediately
+
+    println!("{}", "Reminder added successfully!\n".green().bold());
+    Ok(())
+}
+
+/// Interactive function to mark a reminder as completed by ID.
+fn mark_done_interactive(reminders: &mut [Reminder]) -> Result<()> {
+    println!(
+        "{}",
+        "\n--- Mark Reminder as Completed ---".bright_white().bold()
+    );
+
+    let input = prompt("Enter the ID of the reminder to mark as completed: ")?;
+    let id: usize = match input.trim().parse() {
+        Ok(num) => num,
+        Err(_) => {
+            println!("{}", "Invalid ID. Please enter a number.".red());
+            return Ok(());
+        }
+    };
+
+    // Mutably iterate to find the matching reminder
+    if let Some(r) = reminders.iter_mut().find(|reminder| reminder.id == id) {
+        r.completed = true;
+        println!(
+            "{}",
+            format!("Reminder '{}' marked as completed.", r.title)
+                .green()
+                .bold()
+        );
+        // We can still save, because `&mut [Reminder]` can be passed to a function expecting `&[Reminder]`.
+    } else {
+        println!("{}", format!("No reminder found with ID {}", id).red());
+    }
+
+    Ok(())
+}
+
+/// Interactive function to remove a reminder by ID.
+fn remove_reminder_interactive(reminders: &mut Vec<Reminder>) -> Result<()> {
+    println!("{}", "\n--- Remove a Reminder ---".bright_white().bold());
+
+    let input = prompt("Enter the ID of the reminder to remove: ")?;
+    let id: usize = match input.trim().parse() {
+        Ok(num) => num,
+        Err(_) => {
+            println!("{}", "Invalid ID. Please enter a number.".red());
+            return Ok(());
+        }
+    };
+
+    let initial_len = reminders.len();
+    reminders.retain(|r| r.id != id);
+
+    if reminders.len() == initial_len {
+        println!("{}", format!("No reminder found with ID {}", id).red());
+    } else {
+        println!(
+            "{}",
+            format!("Reminder with ID {} has been removed.", id)
+                .red()
+                .bold()
+        );
+        save_reminders(reminders)?;
+    }
 
     Ok(())
 }
@@ -125,15 +266,10 @@ fn parse_datetime(input: &str) -> anyhow::Result<DateTime<Local>> {
     ];
 
     for &fmt in formats {
-        // parse_from_str returns a `NaiveDateTime` if successful
         if let Ok(naive) = NaiveDateTime::parse_from_str(input, fmt) {
-            // Convert from a naive datetime to a local DateTime
             // `.single()` returns Some if this local time is unambiguous
             if let Some(local_dt) = Local.from_local_datetime(&naive).single() {
                 return Ok(local_dt);
-            } else {
-                // It's either ambiguous or invalid due to DST changes, etc.
-                // You could handle that scenario differently if needed.
             }
         }
     }
@@ -155,7 +291,7 @@ fn load_reminders() -> Result<Vec<Reminder>> {
         File::open(&file_path).with_context(|| format!("Unable to open file {:?}", file_path))?;
     let reader = BufReader::new(file);
 
-    let reminders = serde_json::from_reader(reader)
+    let reminders: Vec<Reminder> = serde_json::from_reader(reader)
         .with_context(|| format!("Failed to parse JSON from {:?}", file_path))?;
     Ok(reminders)
 }
@@ -180,90 +316,6 @@ fn save_reminders(reminders: &[Reminder]) -> Result<()> {
 fn get_reminders_file_path() -> Result<PathBuf> {
     let home = home_dir().context("Could not locate home directory")?;
     Ok(home.join(REMINDERS_FILE))
-}
-
-/// Add a new reminder to the list, assigning it a unique ID.
-fn add_reminder(
-    reminders: &mut Vec<Reminder>,
-    title: String,
-    due: Option<DateTime<Local>>,
-) -> Result<()> {
-    // We can auto-generate a unique ID by taking the max existing ID and adding 1.
-    let new_id = reminders.iter().map(|r| r.id).max().unwrap_or(0) + 1;
-
-    let reminder = Reminder {
-        id: new_id,
-        title,
-        due,
-        completed: false,
-    };
-
-    reminders.push(reminder);
-    Ok(())
-}
-
-/// Mark a reminder as completed by its ID.
-fn mark_done(reminders: &mut [Reminder], id: usize) -> Result<()> {
-    let reminder = reminders
-        .iter_mut()
-        .find(|r| r.id == id)
-        .with_context(|| format!("No reminder found with ID {}", id))?;
-
-    reminder.completed = true;
-    println!("Reminder '{}' marked as completed.", reminder.title);
-    Ok(())
-}
-
-/// Remove a reminder entirely by its ID.
-fn remove_reminder(reminders: &mut Vec<Reminder>, id: usize) -> Result<()> {
-    let initial_len = reminders.len();
-    reminders.retain(|r| r.id != id);
-
-    if reminders.len() == initial_len {
-        anyhow::bail!("No reminder found with ID {}", id);
-    }
-
-    println!("Reminder with ID {} has been removed.", id);
-    Ok(())
-}
-
-/// List reminders. By default, we only list incomplete reminders unless `all` is true.
-fn list_reminders(reminders: &[Reminder], show_all: bool) {
-    let mut to_list: Vec<&Reminder> = if show_all {
-        reminders.iter().collect()
-    } else {
-        reminders.iter().filter(|r| !r.completed).collect()
-    };
-
-    // Sort by due date (Option sort—`None` goes last).
-    to_list.sort_by_key(|r| r.due.map(|dt| dt.timestamp()));
-
-    if to_list.is_empty() {
-        if show_all {
-            println!("No reminders found.");
-        } else {
-            println!("No outstanding (incomplete) reminders.");
-        }
-        return;
-    }
-
-    println!(
-        "{} reminders{}:",
-        to_list.len(),
-        if show_all { " (showing all)" } else { "" }
-    );
-    for reminder in to_list {
-        let due_str = match reminder.due {
-            Some(dt) => dt.format("%Y-%m-%d %H:%M").to_string(),
-            None => "No due date".to_string(),
-        };
-
-        let status = if reminder.completed { "✔ DONE" } else { " " };
-        println!(
-            "[{status}] ID: {} | Title: {} | Due: {}",
-            reminder.id, reminder.title, due_str
-        );
-    }
 }
 
 /// Remove all reminders that are marked completed.

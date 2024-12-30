@@ -10,3 +10,4 @@ serde_json = "*"
 chrono = { version = "*",  features = ["serde"] }
 anyhow = "*"
 dirs = "*"
+colored = "*"
