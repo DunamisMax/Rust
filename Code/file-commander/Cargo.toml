@@ -4,10 +4,5 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-clap = "*"
-rayon = "*"
 chrono = "*"
-
-# clap = "*" provides the flexible CLI interface
-# rayon = "*" helps with parallel iteration
-# chrono = "*" helps with date/time operations
+rayon = "*"

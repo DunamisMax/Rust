@@ -38,7 +38,7 @@ fn main() {
         // Subcommands:
         .subcommand(
             Command::new("interactive")
-                .about("Enter interactive mode to input the name at runtime")
+                .about("Enter interactive mode to input the name at runtime"),
         )
         .get_matches();
 
@@ -66,7 +66,7 @@ fn build_greeting(name: &str, language: &str, excitement_level: u8) -> String {
     let base = match language {
         "English" => format!("Hello, {}", name),
         "Spanish" => format!("¡Hola, {}!", name),
-        "Pirate"  => format!("Ahoy, {}!", name),
+        "Pirate" => format!("Ahoy, {}!", name),
         _ => unreachable!(), // we've covered all possible language choices above
     };
 
@@ -87,10 +87,13 @@ fn run_interactive_mode() {
     io::stdout().flush().unwrap();
 
     let mut buffer = String::new();
-    if let Ok(_) = io::stdin().read_line(&mut buffer) {
+    if io::stdin().read_line(&mut buffer).is_ok() {
         let trimmed = buffer.trim();
         if trimmed.is_empty() {
-            println!("{}", "No name provided, so I'll greet the whole world!".yellow());
+            println!(
+                "{}",
+                "No name provided, so I'll greet the whole world!".yellow()
+            );
             println!("{}", "Hello, World!".green().bold());
         } else {
             println!("{}", format!("Hello, {}!", trimmed).green().bold());
