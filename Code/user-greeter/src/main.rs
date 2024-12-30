@@ -1,6 +1,5 @@
 use colored::*;
-use rand::seq::SliceRandom;
-use rand::thread_rng;
+use rand::Rng;
 use std::io::{self, Write};
 
 fn main() {
@@ -11,15 +10,14 @@ fn main() {
 /// Prints a banner with ASCII art in a random color.
 fn print_welcome_banner() {
     let banner = r#"
-                                                   _               
-                                                  | |              
- _   _  ___   ___  _ __    __ _  _ __   ___   ___ | |_   ___  _ __ 
+                                                   _
+                                                  | |
+ _   _  ___   ___  _ __    __ _  _ __   ___   ___ | |_   ___  _ __
 | | | |/ __| / _ \| '__|  / _` || '__| / _ \ / _ \| __| / _ \| '__|
-| |_| |\__ \|  __/| |    | (_| || |   |  __/|  __/| |_ |  __/| |   
- \__,_||___/ \___||_|     \__, ||_|    \___| \___| \__| \___||_|   
-                           __/ |                                   
-                          |___/                                    
-
+| |_| |\__ \|  __/| |    | (_| || |   |  __/|  __/| |_ |  __/| |
+ \__,_||___/ \___||_|     \__, ||_|    \___| \___| \__| \___||_|
+                           __/ |
+                          |___/
     "#;
 
     cprintln(banner);
@@ -65,9 +63,10 @@ fn cprint<T: AsRef<str>>(msg: T) {
     io::stdout().flush().expect("Failed to flush stdout");
 }
 
-/// Returns a randomly selected color from a predefined list.
+/// Returns a random color from the `colored` crate (standard 8 + bright 8).
 fn random_color() -> Color {
     let colors = [
+        // Standard colors
         Color::Red,
         Color::Green,
         Color::Yellow,
@@ -75,7 +74,17 @@ fn random_color() -> Color {
         Color::Magenta,
         Color::Cyan,
         Color::White,
+        // Bright variants
+        Color::BrightRed,
+        Color::BrightGreen,
+        Color::BrightYellow,
+        Color::BrightBlue,
+        Color::BrightMagenta,
+        Color::BrightCyan,
+        Color::BrightWhite,
     ];
-    let mut rng = thread_rng();
-    *colors.choose(&mut rng).unwrap_or(&Color::White)
+
+    // Note: Black or BrightBlack may be invisible if your terminal background is black!
+    let idx = rand::thread_rng().gen_range(0..colors.len());
+    colors[idx]
 }

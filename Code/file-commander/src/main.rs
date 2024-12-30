@@ -5,10 +5,17 @@ use std::fs::{self, DirEntry};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
+// Add the necessary imports for colors and random selection
+use colored::{Color, Colorize};
+use rand::Rng;
+
 /// A type alias for a `Send + Sync + 'static` error, required by Rayon
 type DynError = Box<dyn Error + Send + Sync + 'static>;
 
 fn main() -> Result<(), DynError> {
+    // Print the welcome banner in a random color
+    print_welcome_banner();
+
     loop {
         println!("\n===== File Commander: Swiss Army Knife =====");
         println!("1) Organize Files (by extension, date, size)");
@@ -35,6 +42,29 @@ fn main() -> Result<(), DynError> {
         }
     }
     Ok(())
+}
+
+/// Prints a banner with ASCII art in a random color.
+fn print_welcome_banner() {
+    let banner = r#"
+  __  _  _                                                              _
+ / _|(_)| |                                                            | |
+| |_  _ | |  ___    ___   ___   _ __ ___   _ __ ___    __ _  _ __    __| |  ___  _ __
+|  _|| || | / _ \  / __| / _ \ | '_ ` _ \ | '_ ` _ \  / _` || '_ \  / _` | / _ \| '__|
+| |  | || ||  __/ | (__ | (_) || | | | | || | | | | || (_| || | | || (_| ||  __/| |
+|_|  |_||_| \___|  \___| \___/ |_| |_| |_||_| |_| |_| \__,_||_| |_| \__,_| \___||_|
+    "#;
+
+    // Print the banner and welcome message in random color
+    cprintln(banner);
+    cprintln("Welcome to the file-commander CLI!\n");
+}
+
+/// A small helper function that prints text in a randomly chosen color.
+fn cprintln(text: &str) {
+    let color = random_color();
+    // `.color(color)` will apply the color to the entire multiline string
+    println!("{}", text.color(color));
 }
 
 /// Prompts user for text input, returning a `String`.
@@ -329,4 +359,30 @@ fn organize_by_size(entry: &DirEntry, root_dir: &Path, dry_run: bool) -> Result<
 fn matches_yes(input: &str) -> bool {
     let s = input.trim().to_lowercase();
     s == "y" || s == "yes"
+}
+
+/// Returns a random color from the `colored` crate (standard 8 + bright 8).
+fn random_color() -> Color {
+    let colors = [
+        // Standard colors
+        Color::Red,
+        Color::Green,
+        Color::Yellow,
+        Color::Blue,
+        Color::Magenta,
+        Color::Cyan,
+        Color::White,
+        // Bright variants
+        Color::BrightRed,
+        Color::BrightGreen,
+        Color::BrightYellow,
+        Color::BrightBlue,
+        Color::BrightMagenta,
+        Color::BrightCyan,
+        Color::BrightWhite,
+    ];
+
+    // Note: Black or BrightBlack is omitted to avoid invisible text on dark backgrounds
+    let idx = rand::thread_rng().gen_range(0..colors.len());
+    colors[idx]
 }

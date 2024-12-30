@@ -1,13 +1,13 @@
-# user-greeter
+# Hello World CLI
 
-A fun little command-line application written in Rust that prints a colorful ASCII banner and greets the user by name.
-This project is part of the [dunamismax/Rust](https://github.com/dunamismax/Rust) repository, located in the `Rust/Code/user-greeter` subdirectory.
+A simple command-line application written in Rust that greets users in random languages and colors.
+This project is part of the [dunamismax/Rust](https://github.com/dunamismax/Rust) repository, located in the `Rust/Code/hello-world-cli` subdirectory.
 
 ---
 
 ## Table of Contents
 
-- [user-greeter](#user-greeter)
+- [Hello World CLI](#hello-world-cli)
   - [Table of Contents](#table-of-contents)
   - [Features](#features)
   - [Prerequisites](#prerequisites)
@@ -22,10 +22,10 @@ This project is part of the [dunamismax/Rust](https://github.com/dunamismax/Rust
 
 ## Features
 
-- **Colorful ASCII banner** for a fun CLI experience.
-- **Random color selection** each time you run the app.
-- **Interactive prompt** to enter your name.
-- **Graceful fallback** if no name is provided.
+- **Random-color ASCII banner** on startup.
+- **Multi-lingual greetings** (randomly chosen from a diverse set).
+- **Interactive prompt** for user name input (defaults to “World” if left empty).
+- **Console clearing** for a neat, fresh look on each run.
 
 ---
 
@@ -44,10 +44,10 @@ This project is part of the [dunamismax/Rust](https://github.com/dunamismax/Rust
    git clone https://github.com/dunamismax/Rust.git
    ```
 
-2. **Navigate to the `user-greeter` directory**:
+2. **Navigate to the `hello-world-cli` directory**:
 
    ```bash
-   cd Rust/Code/user-greeter
+   cd Rust/Code/hello-world-cli
    ```
 
 3. **Build and run**:
@@ -61,42 +61,26 @@ This project is part of the [dunamismax/Rust](https://github.com/dunamismax/Rust
 
 ## Usage
 
-1. **Run without arguments**:
-   You’ll be greeted with a colorful ASCII banner. Then, the application will prompt you for your name. Just type your name and press **Enter**.
+When you run the application, it will:
 
-   ```bash
-   cargo run
-   ```
-
-2. **No name provided**:
-   If you leave the prompt blank, the app will greet you with `"Hello, World! (No name provided.)"`.
+1. Clear your terminal screen.
+2. Display a **random-colored** ASCII banner.
+3. Prompt you for your name. Enter your name (or press Enter to skip).
+4. Greet you in a randomly selected language and color!
 
 ---
 
 ## Examples
 
 ```bash
-# Standard run
+# Basic run (interactive prompt)
 cargo run
-```
 
-**Expected output** (colors will vary):
+# If you simply press Enter at the prompt,
+# it will greet "World" in a random language.
 
-```bash
-        _
-       | |
- _   _  ___   ___  _ __    __ _  _ __   ___   ___ | |_   ___  _ __
-| | | |/ __| / _ \| '__|  / _` || '__| / _ \ / _ \| __| / _ \| '__|
-| |_| |\__ \|  __/| |    | (_| || |   |  __/|  __/| |_ |  __/| |
- \__,_||___/ \___||_|     \__, ||_|    \___| \___| \__| \___||_|
-                        __/ |
-                       |___/
-
-Welcome to the colorful user-greeter!!
-
-What's your name? John
-
-Hello, John!
+# If you enter "Alice" at the prompt,
+# it might say "Spanish: Hola — Alice!" in a random color, for example.
 ```
 
 ---
@@ -109,7 +93,7 @@ Rust
     ├── weather-cli
     ├── file-commander
     ├── <other projects>
-    └── user-greeter  <-- You are here
+    └── hello-world-cli  <-- You are here
         ├── Cargo.toml
         ├── src
         │   └── main.rs

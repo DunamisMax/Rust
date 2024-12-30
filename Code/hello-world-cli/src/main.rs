@@ -1,69 +1,56 @@
+use anyhow::{Context, Result};
 use colored::{Color, Colorize};
-use figlet_rs::FIGfont; // <-- Make sure to add this import
 use rand::seq::SliceRandom;
+use rand::Rng;
 use std::io::{self, Write};
 
-fn main() {
+fn main() -> Result<()> {
     clear_screen();
-    print_colored_banner();
-    prompt_and_greet();
+    print_welcome_banner();
+    prompt_and_greet()?;
+    Ok(())
 }
 
 /// Clears the terminal screen for a clean start.
 fn clear_screen() {
-    // This escape sequence should work on most Unix-like systems.
-    // On Windows, "cls" might be used, but this often works as well.
     print!("\x1B[2J\x1B[1;1H");
 }
 
-/// Displays a random-color ASCII banner for "DunamisMax" using the figlet-rs library.
-fn print_colored_banner() {
-    // Load the standard FIGfont (bundled with figlet-rs).
-    // You can also try other built-in fonts like FIGfont::shadow(), FIGfont::big(), etc.
-    let standard_font = FIGfont::standard().expect("Failed to load standard FIGfont");
+/// Prints a banner with ASCII art in a random color (similar to your weather CLI).
+fn print_welcome_banner() {
+    let banner = r#"
+ _            _  _                                 _      _
+| |          | || |                               | |    | |
+| |__    ___ | || |  ___   __      __  ___   _ __ | |  __| |
+| '_ \  / _ \| || | / _ \  \ \ /\ / / / _ \ | '__|| | / _` |
+| | | ||  __/| || || (_) |  \ V  V / | (_) || |   | || (_| |
+|_| |_| \___||_||_| \___/    \_/\_/   \___/ |_|   |_| \__,_|
+    "#;
 
-    // Convert "DunamisMax" into ASCII art
-    let figure = standard_font
-        .convert("DunamisMax")
-        .expect("Failed to convert text with FIGfont");
-
-    // Created with o1-pro tagline
-    let tagline = "~ Created with o1-pro ~";
-
-    // Pick a random color to make things vibrant
-    let color = random_color();
-
-    // Print the ASCII art in a random color, then the tagline
-    println!("{}", figure.to_string().color(color).bold());
-    println!("{}", tagline.color(color).bold());
-    println!(); // This adds the blank line
+    // Print the banner in a random color
+    cprintln(banner);
 }
 
-/// Prompts the user for their name and greets them with a random-color greeting.
-fn prompt_and_greet() {
-    // Prompt user for their name
-    println!(
-        "{}",
-        "Welcome to the Interactive, Multi-Lingual Greeter!"
-            .cyan()
-            .bold()
-    );
-    println!(); // This adds the blank line
+/// Prompts the user for their name and greets them in a random language/color.
+fn prompt_and_greet() -> Result<()> {
+    cprintln("Welcome to the Interactive, Multi-Lingual Greeter!\n");
+
     print!("What is your name? ");
-    io::stdout().flush().expect("Failed to flush stdout");
+    io::stdout().flush().context("Failed to flush stdout")?;
 
     let mut name = String::new();
-    match io::stdin().read_line(&mut name) {
-        Ok(_) => {
-            let trimmed = name.trim();
-            if trimmed.is_empty() {
-                greet("World");
-            } else {
-                greet(trimmed);
-            }
-        }
-        Err(e) => eprintln!("Failed to read input from stdin: {e}"),
+    io::stdin()
+        .read_line(&mut name)
+        .context("Failed to read input from stdin")?;
+
+    let trimmed = name.trim();
+    if trimmed.is_empty() {
+        greet("World");
+    } else {
+        greet(trimmed);
     }
+
+    Ok(())
 }
 
 /// Selects a random greeting from a list of world languages and prints it in a random color.
@@ -128,32 +115,40 @@ fn greet(name: &str) {
 
     let mut rng = rand::thread_rng();
     if let Some(greeting) = greetings.choose(&mut rng) {
-        // Choose a random color for the greeting text
-        let color = random_color();
-        let message = format!("{} — {}!", greeting, name)
-            .color(color)
-            .bold()
-            .to_string();
-
-        // Print the final greeting
-        println!("{}", message);
+        let message = format!("{} — {}!", greeting, name);
+        cprintln(&message);
     } else {
-        // Fallback (should never happen if `greetings` is non-empty)
-        println!("Hello, {}!", name);
+        // fallback (shouldn't happen if greetings is non-empty)
+        cprintln(&format!("Hello, {}!", name));
     }
 }
 
-/// Picks a random color from a palette of bright, eye-catching choices.
+/// Prints the given text in a random color.
+fn cprintln(text: &str) {
+    println!("{}", text.color(random_color()).bold());
+}
+
+/// Returns a random color (standard 8 + bright 8).
 fn random_color() -> Color {
-    let palette = [
+    let colors = [
+        // Standard
         Color::Red,
         Color::Green,
-        Color::Blue,
         Color::Yellow,
+        Color::Blue,
         Color::Magenta,
         Color::Cyan,
         Color::White,
+        // Bright
+        Color::BrightRed,
+        Color::BrightGreen,
+        Color::BrightYellow,
+        Color::BrightBlue,
+        Color::BrightMagenta,
+        Color::BrightCyan,
+        Color::BrightWhite,
     ];
-    let mut rng = rand::thread_rng();
-    *palette.choose(&mut rng).unwrap_or(&Color::White)
+
+    let idx = rand::thread_rng().gen_range(0..colors.len());
+    colors[idx]
 }

@@ -1,130 +1,173 @@
-# File Organizer
+```markdown
+# File Commander
 
-A cross-platform command-line tool that organizes files in a target directory by **extension**, **creation/modification date**, or **file size**. This project leverages [Rayon](https://github.com/rayon-rs/rayon) for parallel processing, so it can handle large directories efficiently.
-
-## Features
-
-1. **Organize by Extension**
-   Creates subdirectories by file extension, e.g. `by_extension/pdf/`, `by_extension/png/`, etc.
-
-2. **Organize by Date**
-   Uses file creation or last modification time to group files under `by_date/YYYY-MM-DD/`.
-
-3. **Organize by Size**
-   Categorizes files into `small` (<1 MB), `medium` (<100 MB), and `large` (≥100 MB) directories, e.g. `by_size/small/`, `by_size/medium/`, and `by_size/large/`.
-
-4. **Dry-Run Mode**
-   Preview the moves without actually performing them, ensuring that the user is aware of file changes before proceeding.
-
-5. **Recursive**
-   Recursively traverses subdirectories, bringing everything together under one structure (organized by your chosen method).
-
-6. **Parallel Execution**
-   Uses multi-threading (via Rayon) to speed up file operations, especially beneficial for large directories.
-
-## Getting Started
-
-### Prerequisites
-
-- [Rust](https://www.rust-lang.org/tools/install) (1.60+ recommended)
-- Cargo (installed alongside Rust)
-
-### Installation
-
-1. **Clone** this repository:
-
-   ```bash
-   git clone https://github.com/<YOUR_USERNAME>/<REPO_NAME>.git
-   cd <REPO_NAME>
-   ```
-
-2. **Build** the application:
-
-   ```bash
-   cargo build --release
-   ```
-
-3. The compiled binary can be found in `target/release/file_organizer` (Linux/macOS) or `target\release\file_organizer.exe` (Windows).
-
-### Usage
-
-```bash
-file_organizer [OPTIONS] <input_dir> <SUBCOMMAND>
-```
-
-**Subcommands**:
-
-- `extension`
-  Organize files by their extension.
-- `date`
-  Organize files by creation/last modified date.
-- `size`
-  Organize files into `small`, `medium`, and `large` folders.
-
-**Options**:
-
-- `--dry-run`
-  Prints the moves that would be performed, without making any changes.
-
-#### Examples
-
-1. **Organize by extension**:
-
-   ```bash
-   file_organizer /path/to/your/folder extension
-   ```
-
-   This will create a `by_extension` folder inside `/path/to/your/folder` and subfolders named according to each file extension.
-
-2. **Organize by date**:
-
-   ```bash
-   file_organizer --dry-run /path/to/your/folder date
-   ```
-
-   This will show which files *would* be moved to `by_date/YYYY-MM-DD` directories, but won’t actually move them. Remove `--dry-run` to execute.
-
-3. **Organize by size**:
-
-   ```bash
-   file_organizer /path/to/your/folder size
-   ```
-
-   This will create a `by_size` directory in `/path/to/your/folder` containing `small`, `medium`, and `large` subfolders.
-
-### Example File Tree
-
-Below is how your folder might look after organizing by extension:
-
-```bash
-/path/to/your/folder
-└── by_extension
-    ├── pdf
-    │   ├── Document1.pdf
-    │   └── Document2.pdf
-    ├── png
-    │   ├── Image1.png
-    │   └── Image2.png
-    └── no_ext
-        └── README
-```
-
-## Configuration & Customization
-
-- **Log/Output**: Currently, progress and actions are only printed to stdout. Consider integrating a logger or custom progress bar for more advanced workflows.
-- **File Collisions**: If the target file already exists, you may need to implement an additional rename or overwrite policy.
-- **Filtering**: Add CLI flags to exclude certain file types, subdirectories, etc.
-- **Undo or “Dry-Run”**: The `--dry-run` flag gives you a preview, but a more sophisticated rollback might be useful for production scenarios.
-
-## Contributing
-
-Contributions, issues, and feature requests are welcome! Feel free to reach out to discuss improvements or submit fixes.
-
-## License
-
-This project is available under the [MIT License](LICENSE).
-Feel free to modify, distribute, or use it privately or commercially as permitted under the MIT terms.
+A Rust-based command-line application that organizes files by extension, date, or size, and also provides convenient commands to copy, move/rename, or delete files. This project is part of the [dunamismax/Rust](https://github.com/dunamismax/Rust) repository, located in the `Rust/Code/file-commander` subdirectory.
 
 ---
 
-Thank you for using **File Organizer**! If you find this tool helpful, consider giving the repository a star ⭐ on GitHub to show your support. Happy organizing!
+## Table of Contents
+
+- [File Commander](#file-commander)
+  - [Table of Contents](#table-of-contents)
+  - [Features](#features)
+  - [Prerequisites](#prerequisites)
+  - [Installation](#installation)
+  - [Usage](#usage)
+  - [Examples](#examples)
+  - [Project Structure](#project-structure)
+  - [Contributing](#contributing)
+  - [Contact](#contact)
+
+---
+
+## Features
+
+- **Organize files** by:
+  - **Extension** (e.g., `.png`, `.pdf`)
+  - **Date** (creation or last modified date)
+  - **Size** (small, medium, large)
+- **Copy** any file to a new location.
+- **Move/Rename** a file to a new path or name.
+- **Delete** a file or folder with confirmation.
+- **Dry run** option for organizing so you can see changes before applying them.
+- **Parallel processing** using **Rayon** for faster organizing.
+- **Colorful CLI banner** via the **colored** crate, displayed in a random color on each run.
+
+---
+
+## Prerequisites
+
+1. **Rust & Cargo**
+   Make sure you have Rust (and Cargo) installed. You can get them from [rustup](https://www.rust-lang.org/tools/install).
+
+2. **Operating System**
+   Works on Windows, macOS, or Linux—any system that supports the Rust toolchain.
+
+No external API keys or environment variables are required.
+
+---
+
+## Installation
+
+1. **Clone the repository**:
+
+   ```bash
+   git clone https://github.com/dunamismax/Rust.git
+   ```
+
+2. **Navigate to the `file-commander` directory**:
+
+   ```bash
+   cd Rust/Code/file-commander
+   ```
+
+3. **Build and run**:
+
+   ```bash
+   cargo build
+   cargo run
+   ```
+
+---
+
+## Usage
+
+1. **Launch the CLI**:
+
+   ```bash
+   cargo run
+   ```
+
+   Upon starting, you’ll see the main menu with the following options:
+
+   ```bash
+   1) Organize Files (by extension, date, size)
+   2) Copy a File
+   3) Move/Rename a File
+   4) Delete a File
+   5) Exit
+   ```
+
+2. **Organize Files**:
+   - Choose **1** in the main menu.
+   - Specify a directory to organize.
+   - Choose an organization method (Extension, Date, or Size).
+   - Optionally, enable “Dry Run” to simulate changes before actually moving files.
+   - Files will be reorganized into folders named by their extension, date, or size category.
+
+3. **Copy a File**:
+   - Choose **2**.
+   - Enter the source file path.
+   - Enter the destination path (including the new filename).
+
+4. **Move/Rename a File**:
+   - Choose **3**.
+   - Enter the current file path.
+   - Enter the new path/filename.
+
+5. **Delete a File**:
+   - Choose **4**.
+   - Enter the file path or directory path to delete.
+   - Confirm the action.
+
+6. **Exit**:
+   - Choose **5** to exit the application.
+
+---
+
+## Examples
+
+```bash
+# Start the CLI:
+cargo run
+
+# When prompted:
+#   Select an option: 1
+#   Enter the path of the directory to organize: ./my_documents
+#   Organization Methods: 1) By Extension, 2) By Date, 3) By Size
+#   Select a method: 1
+#   Dry Run? (y/n): n
+# Files in ./my_documents will be reorganized into subfolders by extension.
+```
+
+```bash
+# Copy a file:
+cargo run
+#   Select an option: 2
+#   Enter the source file path: ./my_documents/readme.txt
+#   Enter the destination path (including filename): ./backup/readme_backup.txt
+```
+
+---
+
+## Project Structure
+
+```bash
+Rust
+└── Code
+    ├── file-commander  <-- You are here
+    │   ├── Cargo.toml
+    │   └── src
+    │       └── main.rs
+    └── <other projects>
+```
+
+---
+
+## Contributing
+
+Contributions are welcome! Please open an [issue](https://github.com/dunamismax/Rust/issues) or submit a pull request for any bug fixes or new features.
+
+1. Fork the repository.
+2. Create a new branch: `git checkout -b feature/my-feature`.
+3. Commit your changes: `git commit -m "Add some feature"`.
+4. Push to your fork: `git push origin feature/my-feature`.
+5. Open a Pull Request.
+
+---
+
+## Contact
+
+Maintained by [dunamismax.com](https://github.com/dunamismax).
+
+For any inquiries, please reach out via [email](mailto:dunamismax@tutamail.com).

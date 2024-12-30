@@ -8,6 +8,7 @@ use anyhow::{Context, Result};
 use chrono::{DateTime, Local, NaiveDateTime, TimeZone};
 use colored::*;
 use dirs::home_dir;
+use rand::Rng; // <-- Needed for random_color()
 use serde::{Deserialize, Serialize};
 
 /// The name of our JSON file. Will be stored in the user's home directory.
@@ -23,8 +24,8 @@ struct Reminder {
 }
 
 fn main() -> Result<()> {
-    // Print a welcome banner with some ASCII styling.
-    print_banner();
+    // Print our fancy ASCII banner in a random color.
+    print_welcome_banner();
 
     // Load existing reminders from file (or create an empty file if none exists).
     let mut reminders = load_reminders()?;
@@ -75,8 +76,8 @@ fn menu_loop(reminders: &mut Vec<Reminder>) -> Result<()> {
     Ok(())
 }
 
-/// Helper function to print an ASCII-art banner to liven up the CLI.
-fn print_banner() {
+/// Prints a “welcome” banner with ASCII art in a random color.
+fn print_welcome_banner() {
     let banner = r#"
                         _             _                          _  _
                        (_)           | |                        | |(_)
@@ -84,10 +85,42 @@ fn print_banner() {
 | '__| / _ \| '_ ` _ \ | || '_ \  / _` | / _ \| '__|/ __|  / __|| || |
 | |   |  __/| | | | | || || | | || (_| ||  __/| |   \__ \ | (__ | || |
 |_|    \___||_| |_| |_||_||_| |_| \__,_| \___||_|   |___/  \___||_||_|
+    "#;
 
-"#;
+    cprintln(banner);
+    cprintln("Welcome to the Reminders CLI!\n");
+}
 
-    println!("{}", banner.bright_yellow().bold());
+/// Prints colored text in a single random color (same approach as in the weather CLI).
+fn cprintln(text: &str) {
+    let color = random_color();
+    println!("{}", text.color(color));
+}
+
+/// Returns a random color from the `colored` crate (standard 8 + bright 8).
+fn random_color() -> Color {
+    let colors = [
+        // Standard colors
+        Color::Red,
+        Color::Green,
+        Color::Yellow,
+        Color::Blue,
+        Color::Magenta,
+        Color::Cyan,
+        Color::White,
+        // Bright variants
+        Color::BrightRed,
+        Color::BrightGreen,
+        Color::BrightYellow,
+        Color::BrightBlue,
+        Color::BrightMagenta,
+        Color::BrightCyan,
+        Color::BrightWhite,
+    ];
+
+    // Note: Black or BrightBlack may be invisible if your terminal background is black!
+    let idx = rand::thread_rng().gen_range(0..colors.len());
+    colors[idx]
 }
 
 /// Helper function to prompt the user for input and read it from stdin.
@@ -209,7 +242,8 @@ fn mark_done_interactive(reminders: &mut [Reminder]) -> Result<()> {
                 .green()
                 .bold()
         );
-        // We can still save, because `&mut [Reminder]` can be passed to a function expecting `&[Reminder]`.
+        // Persist changes
+        save_reminders(reminders)?;
     } else {
         println!("{}", format!("No reminder found with ID {}", id).red());
     }

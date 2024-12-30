@@ -11,3 +11,4 @@ chrono = { version = "*",  features = ["serde"] }
 anyhow = "*"
 dirs = "*"
 colored = "*"
+rand = "*"

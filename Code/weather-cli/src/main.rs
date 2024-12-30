@@ -123,7 +123,6 @@ __      __  ___   __ _ | |_ | |__    ___  _ __    ___ | | _
 \ \ /\ / / / _ \ / _` || __|| '_ \  / _ \| '__|  / __|| || |
  \ V  V / |  __/| (_| || |_ | | | ||  __/| |    | (__ | || |
   \_/\_/   \___| \__,_| \__||_| |_| \___||_|     \___||_||_|
-
     "#;
 
     cprintln(banner);
@@ -345,17 +344,28 @@ fn cprintln(text: &str) {
     println!("{}", text.color(color));
 }
 
-/// Returns a random color from the `colored` crate.
-fn random_color() -> colored::Color {
+/// Returns a random color from the `colored` crate (standard 8 + bright 8).
+fn random_color() -> Color {
     let colors = [
-        colored::Color::Red,
-        colored::Color::Green,
-        colored::Color::Yellow,
-        colored::Color::Blue,
-        colored::Color::Magenta,
-        colored::Color::Cyan,
-        colored::Color::White,
+        // Standard colors
+        Color::Red,
+        Color::Green,
+        Color::Yellow,
+        Color::Blue,
+        Color::Magenta,
+        Color::Cyan,
+        Color::White,
+        // Bright variants
+        Color::BrightRed,
+        Color::BrightGreen,
+        Color::BrightYellow,
+        Color::BrightBlue,
+        Color::BrightMagenta,
+        Color::BrightCyan,
+        Color::BrightWhite,
     ];
-    let random_index = rand::thread_rng().gen_range(0..colors.len());
-    colors[random_index]
+
+    // Note: Black or BrightBlack may be invisible if your terminal background is black!
+    let idx = rand::thread_rng().gen_range(0..colors.len());
+    colors[idx]
 }
