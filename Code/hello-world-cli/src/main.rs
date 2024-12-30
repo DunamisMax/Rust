@@ -1,21 +1,61 @@
-use colored::Colorize;
+use colored::{Color, Colorize};
+use figlet_rs::FIGfont; // <-- Make sure to add this import
 use rand::seq::SliceRandom;
 use std::io::{self, Write};
 
 fn main() {
-    // Print a welcome message
-    println!("{}", "Welcome to the Interactive Greeter!".cyan().bold());
+    clear_screen();
+    print_colored_banner();
+    prompt_and_greet();
+}
 
+/// Clears the terminal screen for a clean start.
+fn clear_screen() {
+    // This escape sequence should work on most Unix-like systems.
+    // On Windows, "cls" might be used, but this often works as well.
+    print!("\x1B[2J\x1B[1;1H");
+}
+
+/// Displays a random-color ASCII banner for "DunamisMax" using the figlet-rs library.
+fn print_colored_banner() {
+    // Load the standard FIGfont (bundled with figlet-rs).
+    // You can also try other built-in fonts like FIGfont::shadow(), FIGfont::big(), etc.
+    let standard_font = FIGfont::standard().expect("Failed to load standard FIGfont");
+
+    // Convert "DunamisMax" into ASCII art
+    let figure = standard_font
+        .convert("DunamisMax")
+        .expect("Failed to convert text with FIGfont");
+
+    // Created with o1-pro tagline
+    let tagline = "~ Created with o1-pro ~";
+
+    // Pick a random color to make things vibrant
+    let color = random_color();
+
+    // Print the ASCII art in a random color, then the tagline
+    println!("{}", figure.to_string().color(color).bold());
+    println!("{}", tagline.color(color).bold());
+    println!(); // This adds the blank line
+}
+
+/// Prompts the user for their name and greets them with a random-color greeting.
+fn prompt_and_greet() {
     // Prompt user for their name
+    println!(
+        "{}",
+        "Welcome to the Interactive, Multi-Lingual Greeter!"
+            .cyan()
+            .bold()
+    );
+    println!(); // This adds the blank line
     print!("What is your name? ");
-    // Make sure everything written so far is displayed before reading input
     io::stdout().flush().expect("Failed to flush stdout");
 
     let mut name = String::new();
     match io::stdin().read_line(&mut name) {
         Ok(_) => {
             let trimmed = name.trim();
-            // If no name was provided, default to "World"
             if trimmed.is_empty() {
                 greet("World");
             } else {
@@ -26,10 +66,8 @@ fn main() {
     }
 }
 
-/// Randomly selects a greeting from a list of world languages and prints it in color.
+/// Selects a random greeting from a list of world languages and prints it in a random color.
 fn greet(name: &str) {
-    // A list of “Hello” in a variety of world languages.
-    // You can add, remove, or modify entries as desired.
     let greetings = [
         "Mandarin Chinese: 你好 (Nǐ hǎo)",
         "Spanish: Hola",
@@ -67,12 +105,6 @@ fn greet(name: &str) {
         "Dutch: Hallo",
         "Haitian Creole: Bonjou",
         "Tagalog: Kamusta",
-        "Swahili: Jambo",
-        "Zulu: Sawubona",
-        "Greek: Γεια σου (Geia sou)",
-        "Dutch: Hallo",
-        "Haitian Creole: Bonjou",
-        "Tagalog: Kamusta",
         "Hungarian: Szia",
         "Czech: Ahoj",
         "Romanian: Bună",
@@ -96,9 +128,32 @@ fn greet(name: &str) {
 
     let mut rng = rand::thread_rng();
     if let Some(greeting) = greetings.choose(&mut rng) {
-        println!("{}", format!("{} — {}!", greeting, name).green().bold());
+        // Choose a random color for the greeting text
+        let color = random_color();
+        let message = format!("{} — {}!", greeting, name)
+            .color(color)
+            .bold()
+            .to_string();
+
+        // Print the final greeting
+        println!("{}", message);
     } else {
         // Fallback (should never happen if `greetings` is non-empty)
         println!("Hello, {}!", name);
     }
+}
+
+/// Picks a random color from a palette of bright, eye-catching choices.
+fn random_color() -> Color {
+    let palette = [
+        Color::Red,
+        Color::Green,
+        Color::Blue,
+        Color::Yellow,
+        Color::Magenta,
+        Color::Cyan,
+        Color::White,
+    ];
+    let mut rng = rand::thread_rng();
+    *palette.choose(&mut rng).unwrap_or(&Color::White)
 }
