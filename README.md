@@ -11,7 +11,7 @@ A collection of Rust projects showcasing a variety of use cases and coding pract
   - [Overview](#overview)
   - [Projects](#projects)
     - [1. Weather CLI](#1-weather-cli)
-    - [2. User Greeter](#2-user-greeter)
+    - [2. Reminders CLI](#2-reminders-cli)
     - [3. File Commander](#3-file-commander)
   - [Getting Started](#getting-started)
   - [Usage](#usage)
@@ -43,17 +43,18 @@ Below are some highlighted projects in the `Rust/Code/` directory. Each has its 
 
 Go to [Rust/Code/weather-cli](./Code/weather-cli) to learn more.
 
-### 2. User Greeter
+### 2. Reminders CLI
 
-**Description**: A simple CLI that demonstrates user input, random color greetings, and basic I/O in Rust.
-
+**Description**: A command-line application that helps you track personal reminders or tasks, storing data locally as a JSON file in your home directory.
 **Key Features**:
 
-- Interactive prompts to greet users in different styles
-- Random color selection for output text
-- Beginner-friendly example of Rust’s `colored` and `rand` crates
+- Add, list, and remove reminders interactively
+- Optional due date/time (parsed with `chrono`)
+- Mark reminders as completed, and clear all completed entries in one go
+- ASCII banner in random colors for a fun CLI experience
+- Uses `anyhow` for robust error handling and `colored` for terminal styling
 
-Visit [Rust/Code/user-greeter](./Code/user-greeter) for details.
+Visit [Rust/Code/reminders-cli](./Code/reminders-cli) for details.
 
 ### 3. File Commander
 
@@ -74,12 +75,12 @@ Refer to [Rust/Code/file-commander](./Code/file-commander) for further info.
 ## Getting Started
 
 1. **Install Rust and Cargo**
-   - Make sure [Rustup](https://rustup.rs/) is installed on your system. You can confirm with:
+   Make sure [Rustup](https://rustup.rs/) is installed on your system. You can confirm with:
 
-     ```bash
-     rustc --version
-     cargo --version
-     ```
+   ```bash
+   rustc --version
+   cargo --version
+   ```
 
 2. **Clone the Repository**
 
@@ -109,7 +110,7 @@ Because each project is standalone, usage typically follows a pattern:
 ```bash
 cd Rust/Code/<project-name>
 cargo build
-cargo run [-- <arguments>]
+cargo run [-- <arguments>] # Arguments are not required, every app I make can be run standalone and interactively
 ```
 
 For complete details on command-line arguments, environment variables (like API keys), or optional config files, see the individual project’s README.md.
@@ -127,7 +128,7 @@ Rust
 │   │   ├── src
 │   │   ├── Cargo.toml
 │   │   └── README.md
-│   ├── user-greeter
+│   ├── reminders-cli
 │   │   ├── src
 │   │   ├── Cargo.toml
 │   │   └── README.md

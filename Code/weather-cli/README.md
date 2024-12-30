@@ -1,4 +1,3 @@
-```markdown
 # Weather CLI
 
 A simple command-line application written in Rust that fetches weather information from the [OpenWeatherMap](https://openweathermap.org/) API.
@@ -7,18 +6,22 @@ This project is part of the [dunamismax/Rust](https://github.com/dunamismax/Rust
 ---
 
 ## Table of Contents
-1. [Features](#features)
-2. [Prerequisites](#prerequisites)
-3. [Installation](#installation)
-4. [Usage](#usage)
-5. [Examples](#examples)
-6. [Project Structure](#project-structure)
-7. [Contributing](#contributing)
-8. [Contact](#contact)
+
+- [Weather CLI](#weather-cli)
+  - [Table of Contents](#table-of-contents)
+  - [Features](#features)
+  - [Prerequisites](#prerequisites)
+  - [Installation](#installation)
+  - [Usage](#usage)
+  - [Examples](#examples)
+  - [Project Structure](#project-structure)
+  - [Contributing](#contributing)
+  - [Contact](#contact)
 
 ---
 
 ## Features
+
 - Fetch current weather by **city name** or **ZIP code**.
 - Support for **interactive** input if no location is supplied.
 - Multiple **units of measurement** (metric, imperial, standard).
@@ -32,6 +35,7 @@ This project is part of the [dunamismax/Rust](https://github.com/dunamismax/Rust
 ---
 
 ## Prerequisites
+
 1. **Rust & Cargo**
    Ensure you have Rust (and Cargo) installed. You can install Rust using [rustup](https://www.rust-lang.org/tools/install).
 2. **OpenWeatherMap API Key**
@@ -42,6 +46,7 @@ This project is part of the [dunamismax/Rust](https://github.com/dunamismax/Rust
 ## Installation
 
 1. **Clone the repository**:
+
    ```bash
    git clone https://github.com/dunamismax/Rust.git
    ```

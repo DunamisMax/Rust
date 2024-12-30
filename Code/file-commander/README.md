@@ -1,4 +1,3 @@
-```markdown
 # File Commander
 
 A Rust-based command-line application that organizes files by extension, date, or size, and also provides convenient commands to copy, move/rename, or delete files. This project is part of the [dunamismax/Rust](https://github.com/dunamismax/Rust) repository, located in the `Rust/Code/file-commander` subdirectory.
