@@ -1,20 +1,29 @@
+//! A modernized, async Weather CLI application in Rust using Tokio + crossterm
+//! for a clean terminal experience with minimal color theming.
+
 use anyhow::{Context, Result};
 use chrono::{TimeZone, Utc};
 use clap::Parser;
-use colored::*;
+use crossterm::{
+    cursor::MoveTo,
+    execute,
+    style::{Color, Stylize},
+    terminal::{Clear, ClearType},
+};
 use dotenv::dotenv;
-use rand::Rng;
-use reqwest::blocking::Client;
+use reqwest::Client;
 use serde::Deserialize;
-use std::env;
-use std::io::{self, Write};
+use std::{
+    env,
+    io::{self, Write},
+};
 
 /// Command-line arguments handled by Clap.
 #[derive(Debug, Parser)]
 #[command(
     author,
     version,
-    about = "A simple weather CLI using OpenWeatherMap API"
+    about = "A simple async weather CLI using the OpenWeatherMap API"
 )]
 struct Cli {
     /// The location to query; can be a city name or ZIP code
@@ -41,6 +50,7 @@ struct WeatherResponse {
     name: String,
 }
 
+/// Coordinates for location.
 #[derive(Debug, Deserialize)]
 struct Coord {
     lon: f64,
@@ -81,19 +91,21 @@ struct SysData {
     sunset: Option<u64>,
 }
 
-fn main() -> Result<()> {
-    // Initialize .env if available
+/// Asynchronous entry point using Tokio.
+#[tokio::main]
+async fn main() -> Result<()> {
+    clear_screen()?;
+    print_welcome_banner()?;
+
+    // Load environment variables from .env if present
     dotenv().ok();
 
     // Parse CLI arguments
     let cli = Cli::parse();
 
-    // Print our fancy ASCII banner
-    print_welcome_banner();
-
     // Retrieve API key
     let api_key = env::var("OWM_API_KEY")
-        .context("Environment variable OWM_API_KEY not set. Please set it or store it in .env")?;
+        .context("Environment variable OWM_API_KEY not set. Please set it or store it in .env.")?;
 
     // If no location was provided as an argument, prompt user interactively
     let location = match cli.location {
@@ -101,11 +113,11 @@ fn main() -> Result<()> {
         None => prompt_for_location()?,
     };
 
-    // Determine if the user entered a numeric ZIP code or a city
+    // Decide which fetch strategy to use (city vs. zip)
     let weather = if is_numeric(&location) {
-        fetch_weather_zip(&location, &cli.country, &api_key, &cli.units)?
+        fetch_weather_zip(&location, &cli.country, &api_key, &cli.units).await?
     } else {
-        fetch_weather_city(&location, &cli.country, &api_key, &cli.units)?
+        fetch_weather_city(&location, &cli.country, &api_key, &cli.units).await?
     };
 
     // Print the resulting weather
@@ -114,8 +126,15 @@ fn main() -> Result<()> {
     Ok(())
 }
 
-/// Prints a banner with ASCII art in a random color.
-fn print_welcome_banner() {
+/// Clears the terminal screen for a clean start using crossterm.
+fn clear_screen() -> Result<()> {
+    let mut stdout = io::stdout();
+    execute!(stdout, Clear(ClearType::All), MoveTo(0, 0))?;
+    Ok(())
+}
+
+/// Prints a banner with ASCII art in a consistent color theme.
+fn print_welcome_banner() -> Result<()> {
     let banner = r#"
                         _    _                         _  _
                        | |  | |                       | |(_)
@@ -125,13 +144,20 @@ __      __  ___   __ _ | |_ | |__    ___  _ __    ___ | | _
   \_/\_/   \___| \__,_| \__||_| |_| \___||_|     \___||_||_|
     "#;
 
-    cprintln(banner);
-    cprintln("Welcome to the Weather CLI!\n");
+    // Use crossterm's Stylize to color the banner
+    let styled_banner = banner.with(Color::Cyan).bold();
+    print!("{}\r\n", styled_banner);
+
+    // A simple introduction line
+    let intro = "Welcome to the Weather CLI!".with(Color::Magenta).bold();
+    print!("{}\r\n\r\n", intro);
+
+    Ok(())
 }
 
 /// Prompts user for ZIP code or city name (only if CLI arg was not provided).
 fn prompt_for_location() -> Result<String> {
-    print!("Please enter a ZIP code or city name: ");
+    print!("Please enter a ZIP code or city name: \r\n");
     io::stdout().flush().context("Failed to flush stdout")?;
 
     let mut input = String::new();
@@ -148,16 +174,14 @@ fn prompt_for_location() -> Result<String> {
     }
 }
 
-/// Fetches weather data by city name.
-fn fetch_weather_city(
+/// Fetches weather data by city name asynchronously.
+async fn fetch_weather_city(
     city: &str,
     country: &str,
     api_key: &str,
     units: &str,
 ) -> Result<WeatherResponse> {
-    // e.g., q=London,uk  => or if user doesn't want to specify country, omit it.
     let query_city = format!("{},{}", city, country);
-
     let url = format!(
         "https://api.openweathermap.org/data/2.5/weather?q={}&appid={}&units={}",
         query_city, api_key, units
@@ -167,26 +191,25 @@ fn fetch_weather_city(
     let resp = client
         .get(&url)
         .send()
+        .await
         .with_context(|| format!("Failed to send request to URL: {url}"))?
         .error_for_status()
         .context("Received an error status code from OpenWeatherMap")?
         .json::<WeatherResponse>()
+        .await
         .context("Failed to parse JSON response from OpenWeatherMap")?;
 
     Ok(resp)
 }
 
-/// Fetches weather data by ZIP code.
-fn fetch_weather_zip(
+/// Fetches weather data by ZIP code asynchronously.
+async fn fetch_weather_zip(
     zip: &str,
     country: &str,
     api_key: &str,
     units: &str,
 ) -> Result<WeatherResponse> {
-    // For US ZIP codes, you might do: zip=90001,us
-    // If you want to handle multiple countries, pass them in from CLI arguments.
     let query_zip = format!("{},{}", zip, country);
-
     let url = format!(
         "https://api.openweathermap.org/data/2.5/weather?zip={}&appid={}&units={}",
         query_zip, api_key, units
@@ -196,21 +219,27 @@ fn fetch_weather_zip(
     let resp = client
         .get(&url)
         .send()
+        .await
         .with_context(|| format!("Failed to send request to URL: {url}"))?
         .error_for_status()
         .context("Received an error status code from OpenWeatherMap")?
         .json::<WeatherResponse>()
+        .await
         .context("Failed to parse JSON response from OpenWeatherMap")?;
 
     Ok(resp)
 }
 
-/// Prints the weather data in a user-friendly format.
+/// Prints the weather data in a user-friendly format using crossterm color styling.
 fn print_weather(weather: &WeatherResponse) {
-    // Heading line
-    println!(
-        "\n{} in {}{}: {}, {}",
-        "Current weather".bold().cyan(), // <-- heading in bold cyan
+    // Heading
+    let heading = "Current weather".bold().with(Color::Cyan);
+    let condition = weather.weather[0].main.clone().bold().with(Color::Yellow);
+
+    // Intro line
+    print!(
+        "{} in {}{}: {}, {}\r\n",
+        heading,
         weather.name,
         match &weather.sys {
             Some(sys) => match &sys.country {
@@ -219,108 +248,87 @@ fn print_weather(weather: &WeatherResponse) {
             },
             None => "".to_string(),
         },
-        weather.weather[0].main.bold().yellow(), // <-- main weather condition in bold yellow
+        condition,
         weather.weather[0].description
     );
 
     // Temperature
-    println!(
-        "{} {}",
-        "Temperature:".bold().white(), // <-- label in bold white
-        format!("{:.1}°F", weather.main.temp).bright_blue()  // <-- value in bright blue
-    );
+    let temp_label = "Temperature:".bold().with(Color::White);
+    let temp_value = format!("{:.1}°F", weather.main.temp).with(Color::Blue);
+    print!("{} {}\r\n", temp_label, temp_value);
 
     // Feels like
     if let Some(feels_like) = weather.main.feels_like {
-        println!(
-            "{} {}",
-            "Feels like:".bold().white(),
-            format!("{:.1}°F", feels_like).bright_blue()
-        );
+        let feels_label = "Feels like:".bold().with(Color::White);
+        let feels_value = format!("{:.1}°F", feels_like).with(Color::Blue);
+        print!("{} {}\r\n", feels_label, feels_value);
     }
 
     // Min / max temperature
     if let Some(min_temp) = weather.main.temp_min {
-        println!(
-            "{} {}",
-            "Minimum temperature:".bold().white(),
-            format!("{:.1}°F", min_temp).bright_blue()
-        );
+        let min_label = "Minimum temperature:".bold().with(Color::White);
+        let min_value = format!("{:.1}°F", min_temp).with(Color::Blue);
+        print!("{} {}\r\n", min_label, min_value);
     }
     if let Some(max_temp) = weather.main.temp_max {
-        println!(
-            "{} {}",
-            "Maximum temperature:".bold().white(),
-            format!("{:.1}°F", max_temp).bright_blue()
-        );
+        let max_label = "Maximum temperature:".bold().with(Color::White);
+        let max_value = format!("{:.1}°F", max_temp).with(Color::Blue);
+        print!("{} {}\r\n", max_label, max_value);
     }
 
     // Pressure
     if let Some(pressure) = weather.main.pressure {
-        println!(
-            "{} {}",
-            "Pressure:".bold().white(),
-            format!("{} hPa", pressure).bright_blue()
-        );
+        let pressure_label = "Pressure:".bold().with(Color::White);
+        let pressure_value = format!("{} hPa", pressure).with(Color::Blue);
+        print!("{} {}\r\n", pressure_label, pressure_value);
     }
 
     // Humidity
-    println!(
-        "{} {}",
-        "Humidity:".bold().white(),
-        format!("{}%", weather.main.humidity).bright_blue()
-    );
+    let hum_label = "Humidity:".bold().with(Color::White);
+    let hum_value = format!("{}%", weather.main.humidity).with(Color::Blue);
+    print!("{} {}\r\n", hum_label, hum_value);
 
     // Wind
     if let Some(wind) = &weather.wind {
-        println!(
-            "{} {}",
-            "Wind speed:".bold().white(),
-            format!("{:.1} mph", wind.speed).bright_blue()
-        );
+        let wind_speed_label = "Wind speed:".bold().with(Color::White);
+        let wind_speed_val = format!("{:.1} mph", wind.speed).with(Color::Blue);
+        print!("{} {}\r\n", wind_speed_label, wind_speed_val);
+
         if let Some(gust) = wind.gust {
-            println!(
-                "{} {}",
-                "Wind gust:".bold().white(),
-                format!("{:.1} mph", gust).bright_blue()
-            );
+            let wind_gust_label = "Wind gust:".bold().with(Color::White);
+            let wind_gust_val = format!("{:.1} mph", gust).with(Color::Blue);
+            print!("{} {}\r\n", wind_gust_label, wind_gust_val);
         }
+
         if let Some(deg) = wind.deg {
-            println!(
-                "{} {}",
-                "Wind direction:".bold().white(),
-                format!("{}°", deg).bright_blue()
-            );
+            let wind_dir_label = "Wind direction:".bold().with(Color::White);
+            let wind_dir_val = format!("{}°", deg).with(Color::Blue);
+            print!("{} {}\r\n", wind_dir_label, wind_dir_val);
         }
     }
 
     // Coordinates
     if let Some(coord) = &weather.coord {
-        println!(
-            "{} lat {}, lon {}",
-            "Coordinates:".bold().white(),
-            format!("{:.2}", coord.lat).bright_blue(),
-            format!("{:.2}", coord.lon).bright_blue()
-        );
+        let coord_label = "Coordinates:".bold().with(Color::White);
+        let lat_val = format!("{:.2}", coord.lat).with(Color::Blue);
+        let lon_val = format!("{:.2}", coord.lon).with(Color::Blue);
+        print!("{} lat {}, lon {}\r\n", coord_label, lat_val, lon_val);
     }
 
     // Sunrise / Sunset
     if let Some(sys) = &weather.sys {
         if let Some(sunrise) = sys.sunrise {
-            println!(
-                "{} {}",
-                "Sunrise (UTC):".bold().white(),
-                format_timestamp(sunrise).bright_magenta()
-            );
+            let sunrise_label = "Sunrise (UTC):".bold().with(Color::White);
+            let sunrise_val = format_timestamp(sunrise).with(Color::Magenta);
+            print!("{} {}\r\n", sunrise_label, sunrise_val);
         }
         if let Some(sunset) = sys.sunset {
-            println!(
-                "{} {}",
-                "Sunset (UTC):".bold().white(),
-                format_timestamp(sunset).bright_magenta()
-            );
+            let sunset_label = "Sunset (UTC):".bold().with(Color::White);
+            let sunset_val = format_timestamp(sunset).with(Color::Magenta);
+            print!("{} {}\r\n", sunset_label, sunset_val);
         }
     }
+    print!("\r\n");
 }
 
 /// Helper function to format a Unix timestamp into a readable UTC time.
@@ -336,36 +344,4 @@ fn format_timestamp(timestamp: u64) -> String {
 /// Returns true if the string consists only of digits.
 fn is_numeric(s: &str) -> bool {
     s.chars().all(|c| c.is_ascii_digit())
-}
-
-/// Prints colored text in a random color.
-fn cprintln(text: &str) {
-    let color = random_color();
-    println!("{}", text.color(color));
-}
-
-/// Returns a random color from the `colored` crate (standard 8 + bright 8).
-fn random_color() -> Color {
-    let colors = [
-        // Standard colors
-        Color::Red,
-        Color::Green,
-        Color::Yellow,
-        Color::Blue,
-        Color::Magenta,
-        Color::Cyan,
-        Color::White,
-        // Bright variants
-        Color::BrightRed,
-        Color::BrightGreen,
-        Color::BrightYellow,
-        Color::BrightBlue,
-        Color::BrightMagenta,
-        Color::BrightCyan,
-        Color::BrightWhite,
-    ];
-
-    // Note: Black or BrightBlack may be invisible if your terminal background is black!
-    let idx = rand::thread_rng().gen_range(0..colors.len());
-    colors[idx]
 }

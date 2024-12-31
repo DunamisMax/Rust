@@ -10,8 +10,8 @@ serde_json = "*"
 anyhow = "*"
 dotenv = "*"
 chrono = "*"
-colored = "*"
 figlet-rs = "*"
-crossterm = "*"
 rand = "*"
 clap = { version = "*", features = ["derive"] }
+crossterm = "*"
+tokio = { version = "*", features = ["full"] }

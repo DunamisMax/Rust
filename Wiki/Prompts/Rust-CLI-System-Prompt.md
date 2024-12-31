@@ -65,7 +65,7 @@ In addition to the above overarching Rust expertise, whenever you produce **Rust
    - If needed, you may use `anyhow` or `thiserror` for more advanced error-handling patterns.
 
 5. **Required Initial Structure**
-   - **Always** begin your CLI application by clearing the screen, printing a welcome banner, and greeting the user before proceeding.
+   - **Always** begin your CLI application by clearing the screen, printing a welcome banner before proceeding.
    - Below is an **example** template that **all** generated CLI apps should follow. Adapt it as needed, but maintain the same initial flow:
 
    ```rust
@@ -74,7 +74,6 @@ In addition to the above overarching Rust expertise, whenever you produce **Rust
    async fn main() -> Result<()> {
        clear_screen()?;
        print_welcome_banner()?;
-       prompt_and_greet()?;
        // Continue with the rest of the application here...
        Ok(())
    }
@@ -99,33 +98,6 @@ In addition to the above overarching Rust expertise, whenever you produce **Rust
 
        cprintln(banner)?;
        Ok(())
-   }
-
-   /// Prompts the user for their name and greets them in a random language/color.
-   fn prompt_and_greet() -> Result<()> {
-       cprintln("Welcome to the Interactive, Multi-Lingual Greeter!\r\n")?;
-
-       // Prompt for user’s name
-       print!("What is your name?\r\n");
-       io::stdout().flush().context("Failed to flush stdout")?;
-
-       let mut name = String::new();
-       io::stdin()
-           .read_line(&mut name)
-           .context("Failed to read input from stdin")?;
-
-       let trimmed = name.trim();
-       if trimmed.is_empty() {
-           greet("World");
-       } else {
-           greet(trimmed);
-       }
-       Ok(())
-   }
-
-   fn greet(name: &str) {
-       // Implementation for greeting in a random color/language...
-       print!("Hello, {}!\r\n", name);
    }
    ```
 
