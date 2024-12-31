@@ -9,6 +9,7 @@
 use std::{
     error::Error,
     fs, io,
+    io::Write,
     path::{Path, PathBuf},
 };
 
@@ -17,14 +18,12 @@ use clap::Parser;
 use crossterm::{
     event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyModifiers},
     execute,
-    terminal::{disable_raw_mode, enable_raw_mode},
+    terminal::{disable_raw_mode, enable_raw_mode, Clear, ClearType},
 };
-// Removed `rayon::prelude::*` since we're no longer using `.par_iter()`
-use std::io::Write;
 use tui::{
     backend::CrosstermBackend,
     layout::{Constraint, Direction, Layout},
-    style::{Color, Style},
+    style::{Color, Modifier, Style},
     text::{Span, Spans},
     widgets::{Block, Borders, List, ListItem, Paragraph},
     Terminal,
@@ -85,7 +84,6 @@ impl AppState {
             current_dir: std::env::current_dir()?,
             log_lines: Vec::new(),
             menu_index: 0,
-            // The same menu you had, but each entry is a line in the TUI
             menu_items: vec![
                 "1) Change directory (cd)",
                 "2) List contents (ls)",
@@ -118,26 +116,39 @@ async fn main() -> Result<(), DynError> {
     // Enable raw mode for TUI
     enable_raw_mode()?;
     let mut stdout = io::stdout();
-    // Capture mouse events, if you want them
+    // Capture mouse events, if desired
     execute!(stdout, EnableMouseCapture)?;
 
     // Construct a CrosstermBackend for tui
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
-    // Clear screen & print banner
+    // 1) Clear the screen for a clean start
     clear_screen(&mut terminal)?;
+
+    // 2) Print a full-screen welcome banner (via TUI)
     print_welcome_banner(&mut terminal)?;
+
+    // 3) Print a quick status message (if you'd like)
+    print!("CLI started successfully!{}", LINE_ENDING);
 
     // Create our app state
     let mut app_state = AppState::new()?;
 
-    // Enter the TUI event loop
+    // 4) Enter the TUI event loop
     let res = run_app(&mut terminal, &mut app_state);
 
-    // On exit, restore normal terminal mode
+    // 5) On exit, restore normal terminal mode
     disable_raw_mode()?;
     execute!(terminal.backend_mut(), DisableMouseCapture)?;
+
+    // Optionally clear screen on exit and say goodbye
+    execute!(
+        terminal.backend_mut(),
+        Clear(ClearType::All),
+        crossterm::cursor::MoveTo(0, 0)
+    )?;
+    print!("Goodbye!{}", LINE_ENDING);
 
     if let Err(e) = res {
         eprintln!("Error: {e}");
@@ -167,16 +178,16 @@ fn run_app<B: tui::backend::Backend>(
                 ])
                 .split(frame.size());
 
-            // 1) Top pane: Banner + instructions
+            // (1) Top pane: Banner + instructions
             let top_text = vec![
                 Spans::from(Span::styled(
                     "File Commander TUI",
                     Style::default()
                         .fg(Color::Cyan)
-                        .add_modifier(tui::style::Modifier::BOLD),
+                        .add_modifier(Modifier::BOLD),
                 )),
                 Spans::from("Use Up/Down arrows to navigate, Enter to select."),
-                Spans::from("Press 'q' to exit at any time."),
+                Spans::from("Press 'q' to exit at any time, or Ctrl+C."),
                 Spans::from(format!(
                     "Current directory: {}",
                     app_state.current_dir.display()
@@ -186,7 +197,7 @@ fn run_app<B: tui::backend::Backend>(
                 .block(Block::default().borders(Borders::ALL).title(" Banner "));
             frame.render_widget(top_paragraph, chunks[0]);
 
-            // 2) Middle pane: Menu
+            // (2) Middle pane: Menu
             let items: Vec<ListItem> = app_state
                 .menu_items
                 .iter()
@@ -204,7 +215,7 @@ fn run_app<B: tui::backend::Backend>(
                 List::new(items).block(Block::default().borders(Borders::ALL).title(" Menu "));
             frame.render_widget(menu, chunks[1]);
 
-            // 3) Bottom pane: Log output
+            // (3) Bottom pane: Log output
             let log_items: Vec<ListItem> = app_state
                 .log_lines
                 .iter()
@@ -215,70 +226,61 @@ fn run_app<B: tui::backend::Backend>(
             frame.render_widget(log_widget, chunks[2]);
         })?;
 
-        // Handle input
+        // Handle input (non-blocking poll + read)
         if crossterm::event::poll(std::time::Duration::from_millis(100))? {
-            match event::read()? {
-                Event::Key(key_event) => {
-                    match (key_event.code, key_event.modifiers) {
-                        (KeyCode::Char('q'), _) => {
-                            // User pressed 'q' -> exit
-                            app_state
-                                .log_lines
-                                .push("Exiting File Commander. Goodbye!".to_string());
-                            return Ok(());
+            if let Event::Key(key_event) = event::read()? {
+                match (key_event.code, key_event.modifiers) {
+                    // Press 'q' to exit
+                    (KeyCode::Char('q'), _) => {
+                        app_state
+                            .log_lines
+                            .push("Exiting File Commander. Goodbye!".to_string());
+                        return Ok(());
+                    }
+                    // Up/Down arrow to navigate
+                    (KeyCode::Up, _) => {
+                        if app_state.menu_index > 0 {
+                            app_state.menu_index -= 1;
                         }
-                        (KeyCode::Up, _) => {
-                            if app_state.menu_index > 0 {
-                                app_state.menu_index -= 1;
-                            }
+                    }
+                    (KeyCode::Down, _) => {
+                        if app_state.menu_index < app_state.menu_items.len() - 1 {
+                            app_state.menu_index += 1;
                         }
-                        (KeyCode::Down, _) => {
-                            if app_state.menu_index < app_state.menu_items.len() - 1 {
-                                app_state.menu_index += 1;
-                            }
-                        }
-                        (KeyCode::Enter, _) => {
-                            let choice = app_state.menu_index + 1;
-                            if choice == 1 {
-                                change_directory(app_state)?;
-                            } else if choice == 2 {
-                                list_contents(app_state)?;
-                            } else if choice == 3 {
-                                show_tree_view(app_state)?;
-                            } else if choice == 4 {
-                                show_directory_info(app_state)?;
-                            } else if choice == 5 {
-                                create_file(app_state)?;
-                            } else if choice == 6 {
-                                create_directory(app_state)?;
-                            } else if choice == 7 {
-                                copy_interactive(app_state)?;
-                            } else if choice == 8 {
-                                move_or_rename_interactive(app_state)?;
-                            } else if choice == 9 {
-                                delete_interactive(app_state)?;
-                            } else if choice == 10 {
-                                duplicate_interactive(app_state)?;
-                            } else if choice == 11 {
-                                organize_files_interactive(app_state)?;
-                            } else if choice == 12 {
+                    }
+                    // Press Enter to select a menu item
+                    (KeyCode::Enter, _) => {
+                        let choice = app_state.menu_index + 1;
+                        match choice {
+                            1 => change_directory(app_state)?,
+                            2 => list_contents(app_state)?,
+                            3 => show_tree_view(app_state)?,
+                            4 => show_directory_info(app_state)?,
+                            5 => create_file(app_state)?,
+                            6 => create_directory(app_state)?,
+                            7 => copy_interactive(app_state)?,
+                            8 => move_or_rename_interactive(app_state)?,
+                            9 => delete_interactive(app_state)?,
+                            10 => duplicate_interactive(app_state)?,
+                            11 => organize_files_interactive(app_state)?,
+                            12 => {
                                 app_state
                                     .log_lines
                                     .push("Exiting File Commander. Goodbye!".to_string());
                                 return Ok(());
                             }
+                            _ => {}
                         }
-                        // Support Ctrl+C to exit quickly
-                        (KeyCode::Char('c'), KeyModifiers::CONTROL) => {
-                            app_state
-                                .log_lines
-                                .push("Exiting File Commander via Ctrl+C. Goodbye!".to_string());
-                            return Ok(());
-                        }
-                        _ => {}
                     }
+                    // Ctrl+C to exit quickly
+                    (KeyCode::Char('c'), KeyModifiers::CONTROL) => {
+                        app_state
+                            .log_lines
+                            .push("Exiting File Commander via Ctrl+C. Goodbye!".to_string());
+                        return Ok(());
+                    }
+                    _ => {}
                 }
-                _ => {}
             }
         }
     }
@@ -297,10 +299,10 @@ fn clear_screen(
 }
 
 /// Prints a banner with ASCII art at the top using tui widgets.
+/// This is shown **once** at startup in a full-screen layout.
 fn print_welcome_banner(
     terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>,
 ) -> Result<(), DynError> {
-    // Example ASCII banner (similar to before)
     let banner = r#"
   __  _  _                                                              _
  / _|(_)| |                                                            | |
@@ -308,13 +310,17 @@ fn print_welcome_banner(
 |  _|| || | / _ \  / __| / _ \ | '_ ` _ \ | '_ ` _ \  / _` || '_ \  / _` | / _ \| '__|
 | |  | || ||  __/ | (__ | (_) || | | | | || | | | | || (_| || | | || (_| ||  __/| |
 |_|  |_||_| \___|  \___| \___/ |_| |_| |_||_| |_| |_| \__,_||_| |_| \__,_| \___||_|
-    "#;
-    // We simply log the banner (it appears in the bottom "Log" after the first draw)
-    let mut lines = banner.lines().collect::<Vec<&str>>();
-    lines.push("Welcome to the File Commander CLI!");
-    for ln in lines {
-        print!("{}{}", ln, LINE_ENDING);
-    }
+"#;
+
+    // Temporarily draw the banner in a single layout chunk
+    terminal.draw(|frame| {
+        let size = frame.size();
+        let paragraph = Paragraph::new(banner)
+            .block(Block::default().borders(Borders::NONE))
+            .style(Style::default().fg(Color::Cyan));
+        frame.render_widget(paragraph, size);
+    })?;
+
     Ok(())
 }
 
@@ -721,7 +727,7 @@ fn duplicate_interactive(app_state: &mut AppState) -> Result<(), DynError> {
     Ok(())
 }
 
-/// 11) Organize files (now single-threaded).
+/// 11) Organize files (single-threaded).
 fn organize_files_interactive(app_state: &mut AppState) -> Result<(), DynError> {
     app_state
         .log_lines
@@ -737,7 +743,7 @@ fn organize_files_interactive(app_state: &mut AppState) -> Result<(), DynError> 
     }
 
     let method_str = read_user_input(
-        "Organization Methods:\r\n  1) By Extension\r\n  2) By Date\r\n  3) By Size\r\nSelect a method (1/2/3): "
+        "Organization Methods:\n  1) By Extension\n  2) By Date\n  3) By Size\nSelect a method (1/2/3): ",
     )?;
 
     let dry_run_str = read_user_input("Dry Run? (y/n): ")?;
@@ -747,7 +753,7 @@ fn organize_files_interactive(app_state: &mut AppState) -> Result<(), DynError> 
 
     match method_str.trim() {
         "1" => {
-            for e in files.iter() {
+            for e in &files {
                 organize_by_extension(e, &input_dir, dry_run, app_state)?;
             }
             app_state
@@ -755,13 +761,13 @@ fn organize_files_interactive(app_state: &mut AppState) -> Result<(), DynError> 
                 .push("Organized by extension!".to_string());
         }
         "2" => {
-            for e in files.iter() {
+            for e in &files {
                 organize_by_date(e, &input_dir, dry_run, app_state)?;
             }
             app_state.log_lines.push("Organized by date!".to_string());
         }
         "3" => {
-            for e in files.iter() {
+            for e in &files {
                 organize_by_size(e, &input_dir, dry_run, app_state)?;
             }
             app_state.log_lines.push("Organized by size!".to_string());
@@ -857,10 +863,8 @@ fn move_file_or_dry_run(
 ) -> Result<(), DynError> {
     if !dry_run {
         fs::create_dir_all(target_dir)?;
-        let target_path = target_dir.join(
-            path.file_name()
-                .ok_or_else(|| "No filename found in path")?,
-        );
+        // Use `ok_or(...)` instead of `ok_or_else` to satisfy Clippy's recommendation
+        let target_path = target_dir.join(path.file_name().ok_or("No filename found in path")?);
         fs::rename(path, &target_path)?;
         app_state.log_lines.push(format!(
             "Moved {:?} to {:?}",
