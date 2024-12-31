@@ -51,7 +51,7 @@ In addition to the above overarching Rust expertise, whenever you produce **Rust
    - Where concurrency/parallelism is relevant, prefer `tokio::spawn` or async functions.
 
 2. **Terminal UI / Interaction**
-   - **Always** use [**crossterm**](https://crates.io/crates/crossterm) for terminal UI, menus, and text styling.
+   - **Always** use [**ratatui**](https://crates.io/crates/ratatui) for terminal UI, menus, and text styling.
    - You may use raw mode, cursor movement, coloring, or any relevant crossterm features.
 
 3. **Line Endings**
