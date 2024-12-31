@@ -14,18 +14,19 @@ use tokio::main;
 async fn main() -> Result<()> {
     clear_screen()?;
     print_welcome_banner()?;
-    prompt_and_greet()?;
+    prompt_for_name_and_greet()?;
     Ok(())
 }
 
 /// Clears the terminal screen for a clean start using crossterm.
 fn clear_screen() -> Result<()> {
     let mut stdout = io::stdout();
-    execute!(stdout, Clear(ClearType::All), MoveTo(0, 0),)?;
+    execute!(stdout, Clear(ClearType::All), MoveTo(0, 0))?;
     Ok(())
 }
 
-/// Prints a banner with ASCII art in a random color.
+/// Prints a welcome banner with ASCII art in a random color.
+/// Also provides a short usage hint.
 fn print_welcome_banner() -> Result<()> {
     let banner = r#"
  _            _  _                                 _      _
@@ -34,36 +35,38 @@ fn print_welcome_banner() -> Result<()> {
 | '_ \  / _ \| || | / _ \  \ \ /\ / / / _ \ | '__|| | / _` |
 | | | ||  __/| || || (_) |  \ V  V / | (_) || |   | || (_| |
 |_| |_| \___||_||_| \___/    \_/\_/   \___/ |_|   |_| \__,_|
-    "#;
+"#;
 
     cprintln(banner)?;
     Ok(())
 }
 
 /// Prompts the user for their name and greets them in a random language/color.
-fn prompt_and_greet() -> Result<()> {
-    cprintln("Welcome to the Interactive, Multi-Lingual Greeter!\r\n")?;
+///
+/// If the user provides no input, it defaults to greeting "World".
+fn prompt_for_name_and_greet() -> Result<()> {
+    cprintln("Welcome to the Interactive, Multilingual Greeter!\r\n")?;
 
-    // Prompt for user’s name
-    print!("What is your name? \r\n");
+    // Prompt user for their name
+    print!("What is your name?\r\n");
     io::stdout().flush().context("Failed to flush stdout")?;
 
     let mut name = String::new();
     io::stdin()
         .read_line(&mut name)
-        .context("Failed to read input from stdin")?;
+        .context("Failed to read from stdin")?;
 
     let trimmed = name.trim();
     if trimmed.is_empty() {
-        greet("World");
+        greet("World")?;
     } else {
-        greet(trimmed);
+        greet(trimmed)?;
     }
     Ok(())
 }
 
 /// Selects a random greeting from a list of world languages and prints it in a random color.
-fn greet(name: &str) {
+fn greet(name: &str) -> Result<()> {
     let greetings = [
         "Mandarin Chinese: 你好 (Nǐ hǎo)",
         "Spanish: Hola",
@@ -122,17 +125,20 @@ fn greet(name: &str) {
         "Afrikaans: Hallo",
     ];
 
+    // Choose a random greeting
     let mut rng = rand::thread_rng();
-    if let Some(greeting) = greetings.choose(&mut rng) {
-        let message = format!("{} — {}!", greeting, name);
-        cprintln(&message).ok(); // best-effort
-    } else {
-        // fallback (shouldn't happen if greetings is non-empty)
-        cprintln(&format!("Hello, {}!\r\n", name)).ok();
-    }
+    let greeting = greetings
+        .choose(&mut rng)
+        .unwrap_or(&"English: Hello (Fallback)");
+
+    let message = format!("{} — {}!", greeting, name);
+    cprintln(&message)?;
+    Ok(())
 }
 
 /// Prints the given text in a random color using crossterm styling.
+///
+/// This function appends a carriage-return + line-feed (`\r\n`) at the end of `text`.
 fn cprintln(text: &str) -> Result<()> {
     let color = random_color();
     let styled = style(text).with(color).bold();
@@ -140,7 +146,7 @@ fn cprintln(text: &str) -> Result<()> {
     Ok(())
 }
 
-/// Returns a random color (standard + bright).
+/// Returns a random color from a standard 8 color list
 fn random_color() -> Color {
     let colors = [
         Color::Red,
@@ -153,6 +159,7 @@ fn random_color() -> Color {
         Color::Grey,
     ];
 
-    let idx = rand::thread_rng().gen_range(0..colors.len());
+    let mut rng = rand::thread_rng();
+    let idx = rng.gen_range(0..colors.len());
     colors[idx]
 }
