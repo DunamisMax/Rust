@@ -90,155 +90,141 @@ In addition to the above overarching Rust expertise, whenever you produce **Rust
    - **Always** begin your CLI application by clearing the screen, printing a welcome banner (using a `Paragraph` for any ASCII art), and setting up a basic TUI using [tui](https://crates.io/crates/tui) and crossterm.
    - Below is an **example** template that **all** generated CLI apps should follow. **Adapt it as needed**, but maintain the same initial flow and use **cross-platform** line endings via `LINE_ENDING`:
 
-   ```rust
-   ////////////////////////////////////////////////////////////////////////////////
-   // Imports
-   ////////////////////////////////////////////////////////////////////////////////
+```rust
+////////////////////////////////////////////////////////////////////////////////
+// Imports
+////////////////////////////////////////////////////////////////////////////////
 
-   use std::io;
-   use anyhow::Result;
-   use clap::Parser; // Example usage of Clap
+use std::io;
+use anyhow::Result;
+use clap::Parser; // Example usage of Clap
 
-   // Crossterm
-   use crossterm::{
-       event::EnableMouseCapture,
-       terminal::{enable_raw_mode, disable_raw_mode},
-       execute,
-   };
+// Crossterm
+use crossterm::{
+    event::EnableMouseCapture,
+    terminal::{enable_raw_mode, disable_raw_mode},
+    execute,
+};
 
-   // TUI (tui-rs)
-   use tui::{
-       backend::CrosstermBackend,
-       widgets::{Block, Borders, Paragraph},
-       layout::{Layout, Constraint, Direction},
-       style::{Color, Style},
-       Terminal,
-   };
+// TUI (tui-rs)
+use tui::{
+    backend::CrosstermBackend,
+    widgets::{Block, Borders, Paragraph},
+    layout::{Layout, Constraint, Direction},
+    style::{Color, Style},
+    Terminal,
+};
 
-   ////////////////////////////////////////////////////////////////////////////////
-   // Cross-Platform Line Endings
-   ////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////
+// Cross-Platform Line Endings
+////////////////////////////////////////////////////////////////////////////////
 
-   #[cfg(windows)]
-   const LINE_ENDING: &str = "\r\n";
+# [cfg(windows)]
 
-   #[cfg(not(windows))]
-   const LINE_ENDING: &str = "\n";
+const LINE_ENDING: &str = "\r\n";
 
-   ////////////////////////////////////////////////////////////////////////////////
-   // CLI Arguments (Example)
-   ////////////////////////////////////////////////////////////////////////////////
+# [cfg(not(windows))]
 
-   #[derive(Parser, Debug)]
-   #[command(author, version, about = "Example TUI-based CLI", long_about = None)]
-   struct CliArgs {
-       /// Example of a positional argument
-       #[arg(value_name = "SOME_VALUE")]
-       input: Option<String>,
+const LINE_ENDING: &str = "\n";
 
-       /// Example of a flag
-       #[arg(long, short, help = "Turn on verbose mode")]
-       verbose: bool,
-   }
+////////////////////////////////////////////////////////////////////////////////
+// CLI Arguments (Example)
+////////////////////////////////////////////////////////////////////////////////
 
-   ////////////////////////////////////////////////////////////////////////////////
-   // Main (Tokio) Entry Point
-   ////////////////////////////////////////////////////////////////////////////////
+# [derive(Parser, Debug)]
 
-   #[tokio::main]
-   async fn main() -> Result<()> {
-       // Parse CLI arguments (if needed)
-       let args = CliArgs::parse();
-       if args.verbose {
-           print!("Verbose mode enabled...{}", LINE_ENDING);
-       }
+# [command(author, version, about = "Example TUI-based CLI", long_about = None)]
 
-       // Enable raw mode for TUI and construct a CrosstermBackend
-       enable_raw_mode()?;
-       let mut stdout = io::stdout();
-       execute!(stdout, EnableMouseCapture)?; // Optional: capture mouse events
-       let backend = CrosstermBackend::new(stdout);
-       let mut terminal = Terminal::new(backend)?;
+struct CliArgs {
+    /// Example of a positional argument
+    #[arg(value_name = "SOME_VALUE")]
+    input: Option<String>,
 
-       // Clear the screen and display a welcome banner
-       clear_screen(&mut terminal)?;
-       print_welcome_banner(&mut terminal)?;
+    /// Example of a flag
+    #[arg(long, short, help = "Turn on verbose mode")]
+    verbose: bool,
+}
 
-       // Example direct usage of LINE_ENDING:
-       print!("CLI started successfully!{}", LINE_ENDING);
+////////////////////////////////////////////////////////////////////////////////
+// Main (Tokio) Entry Point
+////////////////////////////////////////////////////////////////////////////////
 
-       // ----------------------------------
-       // Application Logic Goes Here
-       // ----------------------------------
-       // TODO: Add your asynchronous workflow, user input, etc.
+# [tokio::main]
 
-       // Before exiting, restore the terminal to normal mode and optionally clear
-       disable_raw_mode()?;
-       // Force a final clear if desired:
-       crossterm::execute!(
-           terminal.backend_mut(),
-           crossterm::terminal::Clear(crossterm::terminal::ClearType::All),
-           crossterm::cursor::MoveTo(0, 0)
-       )?;
-       print!("Goodbye!{}", LINE_ENDING);
+async fn main() -> Result<()> {
+    // Parse CLI arguments (if needed)
+    let args = CliArgs::parse();
+    if args.verbose {
+        print!("Verbose mode enabled...{}", LINE_ENDING);
+    }
 
-       Ok(())
-   }
+    // Enable raw mode for TUI and construct a CrosstermBackend
+    enable_raw_mode()?;
+    let mut stdout = io::stdout();
+    execute!(stdout, EnableMouseCapture)?; // Optional: capture mouse events
+    let backend = CrosstermBackend::new(stdout);
+    let mut terminal = Terminal::new(backend)?;
 
-   ////////////////////////////////////////////////////////////////////////////////
-   // Utility Functions
-   ////////////////////////////////////////////////////////////////////////////////
+    // Clear the screen and display a welcome message
+    clear_screen(&mut terminal)?;
+    print_welcome_message(&mut terminal)?;
 
-   /// Clears the terminal screen for a clean start using tui.
-   fn clear_screen(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>) -> Result<()> {
-       terminal.clear()?;
-       Ok(())
-   }
+    // Example direct usage of LINE_ENDING:
+    print!("CLI started successfully!{}", LINE_ENDING);
 
-   /// Prints a banner with ASCII art at the top using tui widgets.
-   fn print_welcome_banner(
-       terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>,
-   ) -> Result<()> {
-       // Example ASCII banner
-       let banner = r#"
-       _            _  _                                 _      _
-      | |          | || |                               | |    | |
-      | |__    ___ | || |  ___   __      __  ___   _ __ | |  __| |
-      | '_ \  / _ \| || | / _ \  \ \ /\ / / / _ \ | '__|| | / _` |
-      | | | ||  __/| || || (_) |  \ V  V / | (_) || |   | || (_| |
-      |_| |_| \___||_||_| \___/    \_/\_/   \___/ |_|   |_| \__,_|
-       "#;
+    // ----------------------------------
+    // Application Logic Goes Here
+    // ----------------------------------
+    // TODO: Add your asynchronous workflow, user input, etc.
 
-       terminal.draw(|frame| {
-           let size = frame.size();
-           let paragraph = Paragraph::new(banner)
-               .block(Block::default().borders(Borders::NONE))
-               .style(Style::default().fg(Color::Cyan));
-           frame.render_widget(paragraph, size);
-       })?;
+    // Before exiting, restore the terminal to normal mode and optionally clear
+    disable_raw_mode()?;
+    // Force a final clear if desired:
+    crossterm::execute!(
+        terminal.backend_mut(),
+        crossterm::terminal::Clear(crossterm::terminal::ClearType::All),
+        crossterm::cursor::MoveTo(0, 0)
+    )?;
+    print!("Goodbye!{}", LINE_ENDING);
 
-       Ok(())
-   }
-   ```
+    Ok(())
+}
 
-7. **Clearing the Screen on Exit**
-   - By default, once you **disable raw mode** and exit, the terminal may leave behind whatever content was last drawn. If you want a blank screen after quitting:
+////////////////////////////////////////////////////////////////////////////////
+// Utility Functions
+////////////////////////////////////////////////////////////////////////////////
 
-     ```rust
-     disable_raw_mode()?;
-     crossterm::execute!(
-         terminal.backend_mut(),
-         crossterm::terminal::Clear(crossterm::terminal::ClearType::All),
-         crossterm::cursor::MoveTo(0, 0)
-     )?;
-     ```
+/// Clears the terminal screen for a clean start using tui.
+fn clear_screen(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>) -> Result<()> {
+    terminal.clear()?;
+    Ok(())
+}
 
-   - Then print a parting message or simply return:
+/// Prints a simple welcome message at the top using tui widgets.
+fn print_welcome_message(
+    terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>,
+) -> Result<()> {
+    let welcome_text = "Welcome to the [app-name]!";
+    terminal.draw(|frame| {
+        let size = frame.size();
 
-     ```rust
-     print!("Goodbye!{}", LINE_ENDING);
-     Ok(())
-     ```
+        // Example layout to position the welcome message at the top
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .margin(1)
+            .constraints([Constraint::Length(3), Constraint::Min(0)].as_ref())
+            .split(size);
+
+        let paragraph = Paragraph::new(welcome_text)
+            .block(Block::default().borders(Borders::NONE))
+            .style(Style::default().fg(Color::Cyan));
+
+        frame.render_widget(paragraph, chunks[0]);
+    })?;
+
+    Ok(())
+}
+```
 
 8. **Best Practices & Code Style**
    - Maintain **modern, idiomatic Rust** (proper ownership, borrowing, minimal `unsafe`).
