@@ -1,5 +1,5 @@
 [package]
-name = "file_organizer"
+name = "file-commander"
 version = "0.1.0"
 edition = "2021"
 
@@ -7,4 +7,5 @@ edition = "2021"
 chrono = "*"
 rayon = "*"
 rand = "*"
-colored = "*"
+crossterm = "*"
+tokio = { version = "*", features = ["full"] }

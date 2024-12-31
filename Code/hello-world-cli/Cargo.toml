@@ -5,6 +5,7 @@ edition = "2021"
 
 [dependencies]
 rand = "*"
-colored = "*"
 figlet-rs = "*"
 anyhow = "*"
+crossterm = "*"
+tokio = { version = "*", features = ["full"] }

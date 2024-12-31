@@ -1,8 +1,0 @@
-[package]
-name = "user-greeter"
-version = "0.1.0"
-edition = "2021"
-
-[dependencies]
-colored = "*"
-rand = "*"

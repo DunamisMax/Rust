@@ -1,28 +1,31 @@
+#![allow(clippy::all)]
 use chrono::{DateTime, Local};
+use rand::Rng;
 use rayon::prelude::*;
 use std::error::Error;
 use std::fs::{self, DirEntry};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
-// Add the necessary imports for colors and random selection
-use colored::{Color, Colorize};
-use rand::Rng;
+// crossterm for all terminal I/O and styling
+use crossterm::style::{Color, Stylize};
 
 /// A type alias for a `Send + Sync + 'static` error, required by Rayon
 type DynError = Box<dyn Error + Send + Sync + 'static>;
 
-fn main() -> Result<(), DynError> {
+/// Tokio is our async runtime, even if we’re not using async features extensively.
+#[tokio::main]
+async fn main() -> Result<(), DynError> {
     // Print the welcome banner in a random color
     print_welcome_banner();
 
     loop {
-        println!("\n===== File Commander: Swiss Army Knife =====");
-        println!("1) Organize Files (by extension, date, size)");
-        println!("2) Copy a File");
-        println!("3) Move/Rename a File");
-        println!("4) Delete a File");
-        println!("5) Exit\n");
+        print!("\r\n===== File Commander: Swiss Army Knife =====\r\n");
+        print!("1) Organize Files (by extension, date, size)\r\n");
+        print!("2) Copy a File\r\n");
+        print!("3) Move/Rename a File\r\n");
+        print!("4) Delete a File\r\n");
+        print!("5) Exit\r\n\r\n");
 
         // Prompt user for choice
         let choice = prompt("Select an option: ")?;
@@ -33,18 +36,18 @@ fn main() -> Result<(), DynError> {
             "3" => move_or_rename_file_interactive()?,
             "4" => delete_file_interactive()?,
             "5" => {
-                println!("Exiting File Commander. Goodbye!");
+                print!("Exiting File Commander. Goodbye!\r\n");
                 break;
             }
             _ => {
-                println!("Invalid option. Please try again.");
+                print!("Invalid option. Please try again.\r\n");
             }
         }
     }
     Ok(())
 }
 
-/// Prints a banner with ASCII art in a random color.
+/// Prints a banner with ASCII art in a random color (via crossterm).
 fn print_welcome_banner() {
     let banner = r#"
   __  _  _                                                              _
@@ -55,22 +58,22 @@ fn print_welcome_banner() {
 |_|  |_||_| \___|  \___| \___/ |_| |_| |_||_| |_| |_| \__,_||_| |_| \__,_| \___||_|
     "#;
 
-    // Print the banner and welcome message in random color
     cprintln(banner);
-    cprintln("Welcome to the file-commander CLI!\n");
+    cprintln("Welcome to the file-commander CLI!\r\n");
 }
 
-/// A small helper function that prints text in a randomly chosen color.
+/// A small helper function that prints text in a randomly chosen color (via crossterm),
+/// followed by a carriage-return + line-feed.
 fn cprintln(text: &str) {
     let color = random_color();
-    // `.color(color)` will apply the color to the entire multiline string
-    println!("{}", text.color(color));
+    // Stylize text with the color, then print with "\r\n" at the end.
+    print!("{}\r\n", text.with(color));
 }
 
-/// Prompts user for text input, returning a `String`.
+/// Prompts the user for text input, returning a `String`.
 fn prompt(message: &str) -> Result<String, DynError> {
     print!("{message}");
-    // Make sure the prompt is displayed before reading input
+    // Flush so the prompt appears before user input
     io::stdout().flush()?;
 
     let mut input = String::new();
@@ -83,7 +86,7 @@ Interactive Menu: Organize Files
 --------------------------------------------------------------------------- */
 
 fn organize_files_interactive() -> Result<(), DynError> {
-    println!("\n=== Organize Files ===");
+    print!("\r\n=== Organize Files ===\r\n");
 
     // Ask for input directory
     let input_dir = prompt("Enter the path of the directory to organize: ")?;
@@ -91,15 +94,15 @@ fn organize_files_interactive() -> Result<(), DynError> {
 
     // Check if directory exists
     if !input_dir.is_dir() {
-        println!("Error: {:?} is not a valid directory.", input_dir);
+        print!("Error: {:?} is not a valid directory.\r\n", input_dir);
         return Ok(());
     }
 
     // Ask user which method of organization
-    println!("Organization Methods:");
-    println!("1) By Extension");
-    println!("2) By Date");
-    println!("3) By Size");
+    print!("Organization Methods:\r\n");
+    print!("1) By Extension\r\n");
+    print!("2) By Date\r\n");
+    print!("3) By Size\r\n");
     let method = prompt("Select a method (1/2/3): ")?;
 
     // Ask if it's a dry run
@@ -114,24 +117,24 @@ fn organize_files_interactive() -> Result<(), DynError> {
             files
                 .par_iter()
                 .try_for_each(|entry| organize_by_extension(entry, &input_dir, dry_run))?;
-            println!("Organized by extension!");
+            print!("Organized by extension!\r\n");
         }
         "2" => {
             // By date
             files
                 .par_iter()
                 .try_for_each(|entry| organize_by_date(entry, &input_dir, dry_run))?;
-            println!("Organized by date!");
+            print!("Organized by date!\r\n");
         }
         "3" => {
             // By size
             files
                 .par_iter()
                 .try_for_each(|entry| organize_by_size(entry, &input_dir, dry_run))?;
-            println!("Organized by size!");
+            print!("Organized by size!\r\n");
         }
         _ => {
-            println!("Invalid method chosen. Returning to main menu.");
+            print!("Invalid method chosen. Returning to main menu.\r\n");
         }
     }
 
@@ -143,12 +146,12 @@ Interactive Menu: Copy File
 --------------------------------------------------------------------------- */
 
 fn copy_file_interactive() -> Result<(), DynError> {
-    println!("\n=== Copy a File ===");
+    print!("\r\n=== Copy a File ===\r\n");
     let source_path = prompt("Enter the source file path: ")?;
     let source_path = PathBuf::from(source_path.trim());
 
     if !source_path.is_file() {
-        println!("Error: {:?} is not a valid file.", source_path);
+        print!("Error: {:?} is not a valid file.\r\n", source_path);
         return Ok(());
     }
 
@@ -157,10 +160,13 @@ fn copy_file_interactive() -> Result<(), DynError> {
 
     match fs::copy(&source_path, &dest_path) {
         Ok(_) => {
-            println!("Successfully copied {:?} to {:?}", source_path, dest_path);
+            print!(
+                "Successfully copied {:?} to {:?}\r\n",
+                source_path, dest_path
+            );
         }
         Err(e) => {
-            println!("Failed to copy file: {}", e);
+            print!("Failed to copy file: {}\r\n", e);
         }
     }
 
@@ -172,12 +178,12 @@ Interactive Menu: Move or Rename File
 --------------------------------------------------------------------------- */
 
 fn move_or_rename_file_interactive() -> Result<(), DynError> {
-    println!("\n=== Move/Rename a File ===");
+    print!("\r\n=== Move/Rename a File ===\r\n");
     let old_path = prompt("Enter the current file path: ")?;
     let old_path = PathBuf::from(old_path.trim());
 
     if !old_path.exists() {
-        println!("Error: {:?} does not exist.", old_path);
+        print!("Error: {:?} does not exist.\r\n", old_path);
         return Ok(());
     }
 
@@ -186,13 +192,13 @@ fn move_or_rename_file_interactive() -> Result<(), DynError> {
 
     match fs::rename(&old_path, &new_path) {
         Ok(_) => {
-            println!(
-                "Successfully moved/renamed {:?} to {:?}",
+            print!(
+                "Successfully moved/renamed {:?} to {:?}\r\n",
                 old_path, new_path
             );
         }
         Err(e) => {
-            println!("Failed to move/rename file: {}", e);
+            print!("Failed to move/rename file: {}\r\n", e);
         }
     }
 
@@ -204,12 +210,12 @@ Interactive Menu: Delete File
 --------------------------------------------------------------------------- */
 
 fn delete_file_interactive() -> Result<(), DynError> {
-    println!("\n=== Delete a File ===");
+    print!("\r\n=== Delete a File ===\r\n");
     let file_path = prompt("Enter the file path to delete: ")?;
     let file_path = PathBuf::from(file_path.trim());
 
     if !file_path.exists() {
-        println!("Error: {:?} does not exist.", file_path);
+        print!("Error: {:?} does not exist.\r\n", file_path);
         return Ok(());
     }
 
@@ -222,17 +228,17 @@ fn delete_file_interactive() -> Result<(), DynError> {
         // If directory, remove_dir_all; if file, remove_file
         if file_path.is_dir() {
             match fs::remove_dir_all(&file_path) {
-                Ok(_) => println!("{:?} directory deleted.", file_path),
-                Err(e) => println!("Failed to delete directory: {}", e),
+                Ok(_) => print!("{:?} directory deleted.\r\n", file_path),
+                Err(e) => print!("Failed to delete directory: {}\r\n", e),
             }
         } else {
             match fs::remove_file(&file_path) {
-                Ok(_) => println!("{:?} file deleted.", file_path),
-                Err(e) => println!("Failed to delete file: {}", e),
+                Ok(_) => print!("{:?} file deleted.\r\n", file_path),
+                Err(e) => print!("Failed to delete file: {}\r\n", e),
             }
         }
     } else {
-        println!("Delete action canceled.");
+        print!("Delete action canceled.\r\n");
     }
 
     Ok(())
@@ -271,8 +277,8 @@ fn organize_by_extension(entry: &DirEntry, root_dir: &Path, dry_run: bool) -> Re
             let target_path = target_dir.join(path.file_name().ok_or("No filename found")?);
             fs::rename(&path, &target_path)?;
         } else {
-            println!(
-                "[DRY RUN] Would move {:?} to {:?}",
+            print!(
+                "[DRY RUN] Would move {:?} to {:?}\r\n",
                 path.file_name(),
                 target_dir
             );
@@ -286,8 +292,8 @@ fn organize_by_extension(entry: &DirEntry, root_dir: &Path, dry_run: bool) -> Re
             let target_path = target_dir.join(path.file_name().ok_or("No filename found")?);
             fs::rename(&path, &target_path)?;
         } else {
-            println!(
-                "[DRY RUN] Would move {:?} to {:?}",
+            print!(
+                "[DRY RUN] Would move {:?} to {:?}\r\n",
                 path.file_name(),
                 target_dir
             );
@@ -314,8 +320,8 @@ fn organize_by_date(entry: &DirEntry, root_dir: &Path, dry_run: bool) -> Result<
         let target_path = target_dir.join(path.file_name().ok_or("No filename found")?);
         fs::rename(&path, &target_path)?;
     } else {
-        println!(
-            "[DRY RUN] Would move {:?} to {:?}",
+        print!(
+            "[DRY RUN] Would move {:?} to {:?}\r\n",
             path.file_name(),
             target_dir
         );
@@ -345,8 +351,8 @@ fn organize_by_size(entry: &DirEntry, root_dir: &Path, dry_run: bool) -> Result<
         let target_path = target_dir.join(path.file_name().ok_or("No filename found")?);
         fs::rename(&path, &target_path)?;
     } else {
-        println!(
-            "[DRY RUN] Would move {:?} ({}) to {:?}",
+        print!(
+            "[DRY RUN] Would move {:?} ({}) to {:?}\r\n",
             path.file_name(),
             size_label,
             target_dir
@@ -361,10 +367,10 @@ fn matches_yes(input: &str) -> bool {
     s == "y" || s == "yes"
 }
 
-/// Returns a random color from the `colored` crate (standard 8 + bright 8).
+/// Returns a random crossterm `Color` to style text with.
 fn random_color() -> Color {
     let colors = [
-        // Standard colors
+        // Standard base 8
         Color::Red,
         Color::Green,
         Color::Yellow,
@@ -372,17 +378,9 @@ fn random_color() -> Color {
         Color::Magenta,
         Color::Cyan,
         Color::White,
-        // Bright variants
-        Color::BrightRed,
-        Color::BrightGreen,
-        Color::BrightYellow,
-        Color::BrightBlue,
-        Color::BrightMagenta,
-        Color::BrightCyan,
-        Color::BrightWhite,
+        Color::Grey,
     ];
 
-    // Note: Black or BrightBlack is omitted to avoid invisible text on dark backgrounds
     let idx = rand::thread_rng().gen_range(0..colors.len());
     colors[idx]
 }

@@ -1,23 +1,32 @@
 use anyhow::{Context, Result};
-use colored::{Color, Colorize};
-use rand::seq::SliceRandom;
-use rand::Rng;
+use crossterm::{
+    cursor::MoveTo,
+    execute,
+    style::{style, Color, Stylize},
+    terminal::{Clear, ClearType},
+};
+use rand::{seq::SliceRandom, Rng};
 use std::io::{self, Write};
+use tokio::main;
 
-fn main() -> Result<()> {
-    clear_screen();
-    print_welcome_banner();
+/// Asynchronous entry point using Tokio.
+#[main]
+async fn main() -> Result<()> {
+    clear_screen()?;
+    print_welcome_banner()?;
     prompt_and_greet()?;
     Ok(())
 }
 
-/// Clears the terminal screen for a clean start.
-fn clear_screen() {
-    print!("\x1B[2J\x1B[1;1H");
+/// Clears the terminal screen for a clean start using crossterm.
+fn clear_screen() -> Result<()> {
+    let mut stdout = io::stdout();
+    execute!(stdout, Clear(ClearType::All), MoveTo(0, 0),)?;
+    Ok(())
 }
 
-/// Prints a banner with ASCII art in a random color (similar to your weather CLI).
-fn print_welcome_banner() {
+/// Prints a banner with ASCII art in a random color.
+fn print_welcome_banner() -> Result<()> {
     let banner = r#"
  _            _  _                                 _      _
 | |          | || |                               | |    | |
@@ -27,15 +36,16 @@ fn print_welcome_banner() {
 |_| |_| \___||_||_| \___/    \_/\_/   \___/ |_|   |_| \__,_|
     "#;
 
-    // Print the banner in a random color
-    cprintln(banner);
+    cprintln(banner)?;
+    Ok(())
 }
 
 /// Prompts the user for their name and greets them in a random language/color.
 fn prompt_and_greet() -> Result<()> {
-    cprintln("Welcome to the Interactive, Multi-Lingual Greeter!\n");
+    cprintln("Welcome to the Interactive, Multi-Lingual Greeter!\r\n")?;
 
-    print!("What is your name? ");
+    // Prompt for user’s name
+    print!("What is your name? \r\n");
     io::stdout().flush().context("Failed to flush stdout")?;
 
     let mut name = String::new();
@@ -49,7 +59,6 @@ fn prompt_and_greet() -> Result<()> {
     } else {
         greet(trimmed);
     }
-
     Ok(())
 }
 
@@ -116,22 +125,24 @@ fn greet(name: &str) {
     let mut rng = rand::thread_rng();
     if let Some(greeting) = greetings.choose(&mut rng) {
         let message = format!("{} — {}!", greeting, name);
-        cprintln(&message);
+        cprintln(&message).ok(); // best-effort
     } else {
         // fallback (shouldn't happen if greetings is non-empty)
-        cprintln(&format!("Hello, {}!", name));
+        cprintln(&format!("Hello, {}!\r\n", name)).ok();
     }
 }
 
-/// Prints the given text in a random color.
-fn cprintln(text: &str) {
-    println!("{}", text.color(random_color()).bold());
+/// Prints the given text in a random color using crossterm styling.
+fn cprintln(text: &str) -> Result<()> {
+    let color = random_color();
+    let styled = style(text).with(color).bold();
+    print!("{}\r\n", styled);
+    Ok(())
 }
 
-/// Returns a random color (standard 8 + bright 8).
+/// Returns a random color (standard + bright).
 fn random_color() -> Color {
     let colors = [
-        // Standard
         Color::Red,
         Color::Green,
         Color::Yellow,
@@ -139,14 +150,7 @@ fn random_color() -> Color {
         Color::Magenta,
         Color::Cyan,
         Color::White,
-        // Bright
-        Color::BrightRed,
-        Color::BrightGreen,
-        Color::BrightYellow,
-        Color::BrightBlue,
-        Color::BrightMagenta,
-        Color::BrightCyan,
-        Color::BrightWhite,
+        Color::Grey,
     ];
 
     let idx = rand::thread_rng().gen_range(0..colors.len());
