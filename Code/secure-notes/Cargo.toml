@@ -13,4 +13,5 @@ ring = "*"
 base64 = "*"
 zeroize = "*"
 rand = "*"
-ratatui = "*"
+clap = { version = "*", features = ["derive"] }
+tui = "*"

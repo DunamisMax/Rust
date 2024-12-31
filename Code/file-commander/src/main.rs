@@ -8,21 +8,19 @@
 
 use std::{
     error::Error,
-    fs,
-    io,
+    fs, io,
     path::{Path, PathBuf},
 };
 
 use chrono::{DateTime, Local};
-use rayon::prelude::*;
 use clap::Parser;
 use crossterm::{
-    event::{
-        self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEvent, KeyModifiers,
-    },
+    event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyModifiers},
     execute,
     terminal::{disable_raw_mode, enable_raw_mode},
 };
+// Removed `rayon::prelude::*` since we're no longer using `.par_iter()`
+use std::io::Write;
 use tui::{
     backend::CrosstermBackend,
     layout::{Constraint, Direction, Layout},
@@ -173,7 +171,9 @@ fn run_app<B: tui::backend::Backend>(
             let top_text = vec![
                 Spans::from(Span::styled(
                     "File Commander TUI",
-                    Style::default().fg(Color::Cyan).add_modifier(tui::style::Modifier::BOLD),
+                    Style::default()
+                        .fg(Color::Cyan)
+                        .add_modifier(tui::style::Modifier::BOLD),
                 )),
                 Spans::from("Use Up/Down arrows to navigate, Enter to select."),
                 Spans::from("Press 'q' to exit at any time."),
@@ -182,7 +182,8 @@ fn run_app<B: tui::backend::Backend>(
                     app_state.current_dir.display()
                 )),
             ];
-            let top_paragraph = Paragraph::new(top_text).block(Block::default().borders(Borders::ALL).title(" Banner "));
+            let top_paragraph = Paragraph::new(top_text)
+                .block(Block::default().borders(Borders::ALL).title(" Banner "));
             frame.render_widget(top_paragraph, chunks[0]);
 
             // 2) Middle pane: Menu
@@ -199,7 +200,8 @@ fn run_app<B: tui::backend::Backend>(
                     ListItem::new(Span::styled(title, style))
                 })
                 .collect();
-            let menu = List::new(items).block(Block::default().borders(Borders::ALL).title(" Menu "));
+            let menu =
+                List::new(items).block(Block::default().borders(Borders::ALL).title(" Menu "));
             frame.render_widget(menu, chunks[1]);
 
             // 3) Bottom pane: Log output
@@ -286,8 +288,6 @@ fn run_app<B: tui::backend::Backend>(
 // Clear Screen & Welcome Banner (TUI)
 ////////////////////////////////////////////////////////////////////////////////
 
-use tui::backend::CrosstermBackend;
-
 /// Clears the terminal screen for a clean start using tui.
 fn clear_screen(
     terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>,
@@ -309,8 +309,7 @@ fn print_welcome_banner(
 | |  | || ||  __/ | (__ | (_) || | | | | || | | | | || (_| || | | || (_| ||  __/| |
 |_|  |_||_| \___|  \___| \___/ |_| |_| |_||_| |_| |_| \__,_||_| |_| \__,_| \___||_|
     "#;
-    // We simply log the banner (it will appear in the bottom "Log" after the first draw)
-    // or you could show it in the top chunk. Here we just do one immediate draw:
+    // We simply log the banner (it appears in the bottom "Log" after the first draw)
     let mut lines = banner.lines().collect::<Vec<&str>>();
     lines.push("Welcome to the File Commander CLI!");
     for ln in lines {
@@ -320,13 +319,11 @@ fn print_welcome_banner(
 }
 
 ////////////////////////////////////////////////////////////////////////////////
-// Menu Actions (adapted to use AppState logs)
+// Menu Actions
 ////////////////////////////////////////////////////////////////////////////////
 
 /// 1) Change directory (cd).
 fn change_directory(app_state: &mut AppState) -> Result<(), DynError> {
-    // We'll read a path from the user via blocking call in the console (for brevity).
-    // Alternatively, you can integrate an input box in TUI.
     let path = read_user_input("Enter path to change directory: ")?;
     let trimmed = path.trim();
     if trimmed.is_empty() {
@@ -362,9 +359,7 @@ fn list_contents(app_state: &mut AppState) -> Result<(), DynError> {
 
     let dir = &app_state.current_dir;
     let entries = fs::read_dir(dir)?;
-    app_state
-        .log_lines
-        .push(format!("Contents of {:?}:", dir));
+    app_state.log_lines.push(format!("Contents of {:?}:", dir));
 
     for entry in entries.flatten() {
         let file_name = entry.file_name().to_string_lossy().to_string();
@@ -376,7 +371,7 @@ fn list_contents(app_state: &mut AppState) -> Result<(), DynError> {
     Ok(())
 }
 
-/// 3) Show all files/folders within the specified directory in a tree view.
+/// 3) Show all files/folders in a tree view.
 fn show_tree_view(app_state: &mut AppState) -> Result<(), DynError> {
     let path = read_user_input(&format!(
         "Enter directory path for tree view (default: {}): ",
@@ -402,14 +397,20 @@ fn show_tree_view(app_state: &mut AppState) -> Result<(), DynError> {
     Ok(())
 }
 
-fn print_directory_tree(dir: &Path, level: usize, app_state: &mut AppState) -> Result<(), DynError> {
+fn print_directory_tree(
+    dir: &Path,
+    level: usize,
+    app_state: &mut AppState,
+) -> Result<(), DynError> {
     let indent = "  ".repeat(level);
     let dir_name = dir
         .file_name()
         .unwrap_or_default()
         .to_string_lossy()
         .to_string();
-    app_state.log_lines.push(format!("{}- {}", indent, dir_name));
+    app_state
+        .log_lines
+        .push(format!("{}- {}", indent, dir_name));
 
     let entries = fs::read_dir(dir)?;
     let mut dirs = Vec::new();
@@ -434,7 +435,7 @@ fn print_directory_tree(dir: &Path, level: usize, app_state: &mut AppState) -> R
     Ok(())
 }
 
-/// 4) Show directory info (size, file count, ownership).
+/// 4) Show directory info.
 fn show_directory_info(app_state: &mut AppState) -> Result<(), DynError> {
     let path = read_user_input(&format!(
         "Enter directory path for info (default: {}): ",
@@ -453,7 +454,9 @@ fn show_directory_info(app_state: &mut AppState) -> Result<(), DynError> {
         return Ok(());
     }
 
-    app_state.log_lines.push("=== Directory Info ===".to_string());
+    app_state
+        .log_lines
+        .push("=== Directory Info ===".to_string());
     let (total_size, file_count, dir_count) = compute_directory_stats(&dir_path)?;
     app_state
         .log_lines
@@ -579,14 +582,16 @@ fn copy_interactive(app_state: &mut AppState) -> Result<(), DynError> {
 
     if source_path.is_file() {
         match fs::copy(&source_path, &destination_path) {
-            Ok(_) => app_state.log_lines.push("File copied successfully.".to_string()),
-            Err(e) => app_state
+            Ok(_) => app_state
                 .log_lines
-                .push(format!("File copy failed: {}", e)),
+                .push("File copied successfully.".to_string()),
+            Err(e) => app_state.log_lines.push(format!("File copy failed: {}", e)),
         }
     } else {
         copy_directory_recursive(&source_path, &destination_path)?;
-        app_state.log_lines.push("Directory copied successfully.".to_string());
+        app_state
+            .log_lines
+            .push("Directory copied successfully.".to_string());
     }
 
     Ok(())
@@ -624,7 +629,9 @@ fn move_or_rename_interactive(app_state: &mut AppState) -> Result<(), DynError> 
     }
 
     match fs::rename(&source_path, &dest_path) {
-        Ok(_) => app_state.log_lines.push("Move/rename succeeded.".to_string()),
+        Ok(_) => app_state
+            .log_lines
+            .push("Move/rename succeeded.".to_string()),
         Err(e) => app_state
             .log_lines
             .push(format!("Move/rename failed: {}", e)),
@@ -665,7 +672,9 @@ fn delete_interactive(app_state: &mut AppState) -> Result<(), DynError> {
             }
         }
     } else {
-        app_state.log_lines.push("Delete action canceled.".to_string());
+        app_state
+            .log_lines
+            .push("Delete action canceled.".to_string());
     }
     Ok(())
 }
@@ -712,9 +721,11 @@ fn duplicate_interactive(app_state: &mut AppState) -> Result<(), DynError> {
     Ok(())
 }
 
-/// 11) Organize files.
+/// 11) Organize files (now single-threaded).
 fn organize_files_interactive(app_state: &mut AppState) -> Result<(), DynError> {
-    app_state.log_lines.push("=== Organize Files ===".to_string());
+    app_state
+        .log_lines
+        .push("=== Organize Files ===".to_string());
     let input_dir_str = read_user_input("Enter the path of the directory to organize: ")?;
     let input_dir = PathBuf::from(input_dir_str.trim());
 
@@ -736,21 +747,23 @@ fn organize_files_interactive(app_state: &mut AppState) -> Result<(), DynError> 
 
     match method_str.trim() {
         "1" => {
-            files
-                .par_iter()
-                .try_for_each(|e| organize_by_extension(e, &input_dir, dry_run, app_state))?;
-            app_state.log_lines.push("Organized by extension!".to_string());
+            for e in files.iter() {
+                organize_by_extension(e, &input_dir, dry_run, app_state)?;
+            }
+            app_state
+                .log_lines
+                .push("Organized by extension!".to_string());
         }
         "2" => {
-            files
-                .par_iter()
-                .try_for_each(|e| organize_by_date(e, &input_dir, dry_run, app_state))?;
+            for e in files.iter() {
+                organize_by_date(e, &input_dir, dry_run, app_state)?;
+            }
             app_state.log_lines.push("Organized by date!".to_string());
         }
         "3" => {
-            files
-                .par_iter()
-                .try_for_each(|e| organize_by_size(e, &input_dir, dry_run, app_state))?;
+            for e in files.iter() {
+                organize_by_size(e, &input_dir, dry_run, app_state)?;
+            }
             app_state.log_lines.push("Organized by size!".to_string());
         }
         _ => {
@@ -875,10 +888,7 @@ fn matches_yes(input: &str) -> bool {
 }
 
 /// A blocking function to read user input from stdin.
-/// In a more advanced TUI, you'd capture typed keys in the event loop.
 fn read_user_input(prompt_msg: &str) -> Result<String, DynError> {
-    // Print a prompt to stdout (so user knows what they're entering).
-    // This is a minimal approach—some TUI apps would have an input box instead.
     print!("{prompt_msg}{}", LINE_ENDING);
     io::stdout().flush()?;
 

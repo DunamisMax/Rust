@@ -9,3 +9,5 @@ figlet-rs = "*"
 anyhow = "*"
 crossterm = "*"
 tokio = { version = "*", features = ["full"] }
+clap = { version = "*", features = ["derive"] }
+tui = "*"

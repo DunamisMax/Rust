@@ -12,7 +12,8 @@ dotenv = "*"
 chrono = "*"
 figlet-rs = "*"
 rand = "*"
-clap = { version = "*", features = ["derive"] }
 ratatui = "*"
 tokio = { version = "*", features = ["full"] }
 crossterm = "*"
+clap = { version = "*", features = ["derive"] }
+tui = "*"

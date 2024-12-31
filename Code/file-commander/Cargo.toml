@@ -9,3 +9,5 @@ rayon = "*"
 rand = "*"
 crossterm = "*"
 tokio = { version = "*", features = ["full"] }
+clap = { version = "*", features = ["derive"] }
+tui = "*"
