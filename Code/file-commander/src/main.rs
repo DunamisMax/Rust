@@ -1,94 +1,306 @@
-//! A File Commander CLI with directory navigation, file operations, and theming.
-//! Demonstrates:
-//! - crossterm for terminal I/O, coloring, and screen management
-//! - tokio for async runtime
-//! - parallel file organizing logic (Rayon)
-//! - directory tree view, directory info, create/copy/move/rename/delete/duplicate, etc.
+////////////////////////////////////////////////////////////////////////////////
+// File Commander - TUI Version with Tokio, Clap, crossterm, and tui
+////////////////////////////////////////////////////////////////////////////////
+
+////////////////////////////////////////////////////////////////////////////////
+// Imports
+////////////////////////////////////////////////////////////////////////////////
+
+use std::{
+    error::Error,
+    fs,
+    io,
+    path::{Path, PathBuf},
+};
 
 use chrono::{DateTime, Local};
 use rayon::prelude::*;
-use std::error::Error;
-use std::fs::{self, DirEntry};
-use std::io::{self, Write};
-use std::os::unix::fs::MetadataExt; // for ownership on Unix
-use std::path::{Path, PathBuf};
-
-// crossterm for all terminal I/O and styling
+use clap::Parser;
 use crossterm::{
-    cursor::MoveTo,
+    event::{
+        self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEvent, KeyModifiers,
+    },
     execute,
-    style::{Color, Stylize},
-    terminal::{Clear, ClearType},
+    terminal::{disable_raw_mode, enable_raw_mode},
+};
+use tui::{
+    backend::CrosstermBackend,
+    layout::{Constraint, Direction, Layout},
+    style::{Color, Style},
+    text::{Span, Spans},
+    widgets::{Block, Borders, List, ListItem, Paragraph},
+    Terminal,
 };
 
-/// A type alias for a `Send + Sync + 'static` error, required by Rayon
+////////////////////////////////////////////////////////////////////////////////
+// Cross-Platform Line Endings
+////////////////////////////////////////////////////////////////////////////////
+
+#[cfg(windows)]
+const LINE_ENDING: &str = "\r\n";
+
+#[cfg(not(windows))]
+const LINE_ENDING: &str = "\n";
+
+////////////////////////////////////////////////////////////////////////////////
+// CLI Arguments
+////////////////////////////////////////////////////////////////////////////////
+
+#[derive(Parser, Debug)]
+#[command(
+    author,
+    version,
+    about = "File Commander TUI - Demonstration of file ops with crossterm+tui",
+    long_about = None
+)]
+struct CliArgs {
+    /// Whether to enable verbose mode
+    #[arg(long, short)]
+    verbose: bool,
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// Type Aliases / Errors
+////////////////////////////////////////////////////////////////////////////////
+
 type DynError = Box<dyn Error + Send + Sync + 'static>;
 
-/// Asynchronous entry point using Tokio.
+////////////////////////////////////////////////////////////////////////////////
+// State
+////////////////////////////////////////////////////////////////////////////////
+
+/// Tracks the current state of the TUI application.
+struct AppState {
+    /// Current directory context
+    current_dir: PathBuf,
+    /// Lines to display in our "log" output at the bottom
+    log_lines: Vec<String>,
+    /// Index of currently highlighted menu item
+    menu_index: usize,
+    /// The main menu items
+    menu_items: Vec<&'static str>,
+}
+
+impl AppState {
+    fn new() -> Result<Self, DynError> {
+        Ok(Self {
+            current_dir: std::env::current_dir()?,
+            log_lines: Vec::new(),
+            menu_index: 0,
+            // The same menu you had, but each entry is a line in the TUI
+            menu_items: vec![
+                "1) Change directory (cd)",
+                "2) List contents (ls)",
+                "3) Show directory tree (tree)",
+                "4) Show directory info",
+                "5) Create file (touch)",
+                "6) Create directory (mkdir)",
+                "7) Copy file/directory (cp)",
+                "8) Move/rename file/directory (mv)",
+                "9) Delete file/directory (rm)",
+                "10) Duplicate file/directory",
+                "11) Organize files (by extension/date/size)",
+                "12) Exit",
+            ],
+        })
+    }
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// Main (Tokio) Entry Point
+////////////////////////////////////////////////////////////////////////////////
+
 #[tokio::main]
 async fn main() -> Result<(), DynError> {
-    clear_screen()?;
-    print_welcome_banner()?;
+    let args = CliArgs::parse();
+    if args.verbose {
+        print!("Verbose mode enabled...{}", LINE_ENDING);
+    }
 
-    // We'll maintain a "current directory" context.
-    let mut current_dir = std::env::current_dir()?;
+    // Enable raw mode for TUI
+    enable_raw_mode()?;
+    let mut stdout = io::stdout();
+    // Capture mouse events, if you want them
+    execute!(stdout, EnableMouseCapture)?;
 
-    loop {
-        print_breadcrumb(&current_dir)?;
-        print!("Select an option:\r\n");
-        print!("  1) Change directory (cd)\r\n");
-        print!("  2) List contents (ls)\r\n");
-        print!("  3) Show directory tree (tree)\r\n");
-        print!("  4) Show directory info\r\n");
-        print!("  5) Create file (touch)\r\n");
-        print!("  6) Create directory (mkdir)\r\n");
-        print!("  7) Copy file/directory (cp)\r\n");
-        print!("  8) Move/rename file/directory (mv)\r\n");
-        print!("  9) Delete file/directory (rm)\r\n");
-        print!(" 10) Duplicate file/directory\r\n");
-        print!(" 11) Organize files (by extension/date/size)\r\n");
-        print!(" 12) Exit\r\n\r\n");
+    // Construct a CrosstermBackend for tui
+    let backend = CrosstermBackend::new(stdout);
+    let mut terminal = Terminal::new(backend)?;
 
-        let choice = prompt("Enter choice: ")?;
+    // Clear screen & print banner
+    clear_screen(&mut terminal)?;
+    print_welcome_banner(&mut terminal)?;
 
-        match choice.trim() {
-            "1" => change_directory(&mut current_dir)?,
-            "2" => list_contents(&current_dir)?,
-            "3" => show_tree_view(&current_dir)?,
-            "4" => show_directory_info(&current_dir)?,
-            "5" => create_file(&current_dir)?,
-            "6" => create_directory(&current_dir)?,
-            "7" => copy_interactive()?,
-            "8" => move_or_rename_interactive()?,
-            "9" => delete_interactive()?,
-            "10" => duplicate_interactive()?,
-            "11" => organize_files_interactive()?,
-            "12" => {
-                print!("Exiting File Commander. Goodbye!\r\n");
-                break;
-            }
-            _ => {
-                print!("Invalid option. Please try again.\r\n");
-            }
-        }
+    // Create our app state
+    let mut app_state = AppState::new()?;
+
+    // Enter the TUI event loop
+    let res = run_app(&mut terminal, &mut app_state);
+
+    // On exit, restore normal terminal mode
+    disable_raw_mode()?;
+    execute!(terminal.backend_mut(), DisableMouseCapture)?;
+
+    if let Err(e) = res {
+        eprintln!("Error: {e}");
     }
 
     Ok(())
 }
 
-/* ---------------------------------------------------------------------------
-   1) Clear screen & welcome banner (required structure)
----------------------------------------------------------------------------*/
+////////////////////////////////////////////////////////////////////////////////
+// TUI: Main Event-Loop
+////////////////////////////////////////////////////////////////////////////////
 
-/// Clears the terminal screen for a clean start using crossterm.
-fn clear_screen() -> Result<(), DynError> {
-    let mut stdout = io::stdout();
-    execute!(stdout, Clear(ClearType::All), MoveTo(0, 0))?;
+fn run_app<B: tui::backend::Backend>(
+    terminal: &mut Terminal<B>,
+    app_state: &mut AppState,
+) -> Result<(), DynError> {
+    loop {
+        // Draw the UI
+        terminal.draw(|frame| {
+            // Split the screen vertically into top/middle/bottom
+            let chunks = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([
+                    Constraint::Length(8),  // banner/instructions area
+                    Constraint::Length(14), // menu area
+                    Constraint::Min(10),    // log area
+                ])
+                .split(frame.size());
+
+            // 1) Top pane: Banner + instructions
+            let top_text = vec![
+                Spans::from(Span::styled(
+                    "File Commander TUI",
+                    Style::default().fg(Color::Cyan).add_modifier(tui::style::Modifier::BOLD),
+                )),
+                Spans::from("Use Up/Down arrows to navigate, Enter to select."),
+                Spans::from("Press 'q' to exit at any time."),
+                Spans::from(format!(
+                    "Current directory: {}",
+                    app_state.current_dir.display()
+                )),
+            ];
+            let top_paragraph = Paragraph::new(top_text).block(Block::default().borders(Borders::ALL).title(" Banner "));
+            frame.render_widget(top_paragraph, chunks[0]);
+
+            // 2) Middle pane: Menu
+            let items: Vec<ListItem> = app_state
+                .menu_items
+                .iter()
+                .enumerate()
+                .map(|(i, &title)| {
+                    let style = if i == app_state.menu_index {
+                        Style::default().fg(Color::Black).bg(Color::Yellow)
+                    } else {
+                        Style::default().fg(Color::White)
+                    };
+                    ListItem::new(Span::styled(title, style))
+                })
+                .collect();
+            let menu = List::new(items).block(Block::default().borders(Borders::ALL).title(" Menu "));
+            frame.render_widget(menu, chunks[1]);
+
+            // 3) Bottom pane: Log output
+            let log_items: Vec<ListItem> = app_state
+                .log_lines
+                .iter()
+                .map(|line| ListItem::new(line.clone()))
+                .collect();
+            let log_widget =
+                List::new(log_items).block(Block::default().borders(Borders::ALL).title(" Log "));
+            frame.render_widget(log_widget, chunks[2]);
+        })?;
+
+        // Handle input
+        if crossterm::event::poll(std::time::Duration::from_millis(100))? {
+            match event::read()? {
+                Event::Key(key_event) => {
+                    match (key_event.code, key_event.modifiers) {
+                        (KeyCode::Char('q'), _) => {
+                            // User pressed 'q' -> exit
+                            app_state
+                                .log_lines
+                                .push("Exiting File Commander. Goodbye!".to_string());
+                            return Ok(());
+                        }
+                        (KeyCode::Up, _) => {
+                            if app_state.menu_index > 0 {
+                                app_state.menu_index -= 1;
+                            }
+                        }
+                        (KeyCode::Down, _) => {
+                            if app_state.menu_index < app_state.menu_items.len() - 1 {
+                                app_state.menu_index += 1;
+                            }
+                        }
+                        (KeyCode::Enter, _) => {
+                            let choice = app_state.menu_index + 1;
+                            if choice == 1 {
+                                change_directory(app_state)?;
+                            } else if choice == 2 {
+                                list_contents(app_state)?;
+                            } else if choice == 3 {
+                                show_tree_view(app_state)?;
+                            } else if choice == 4 {
+                                show_directory_info(app_state)?;
+                            } else if choice == 5 {
+                                create_file(app_state)?;
+                            } else if choice == 6 {
+                                create_directory(app_state)?;
+                            } else if choice == 7 {
+                                copy_interactive(app_state)?;
+                            } else if choice == 8 {
+                                move_or_rename_interactive(app_state)?;
+                            } else if choice == 9 {
+                                delete_interactive(app_state)?;
+                            } else if choice == 10 {
+                                duplicate_interactive(app_state)?;
+                            } else if choice == 11 {
+                                organize_files_interactive(app_state)?;
+                            } else if choice == 12 {
+                                app_state
+                                    .log_lines
+                                    .push("Exiting File Commander. Goodbye!".to_string());
+                                return Ok(());
+                            }
+                        }
+                        // Support Ctrl+C to exit quickly
+                        (KeyCode::Char('c'), KeyModifiers::CONTROL) => {
+                            app_state
+                                .log_lines
+                                .push("Exiting File Commander via Ctrl+C. Goodbye!".to_string());
+                            return Ok(());
+                        }
+                        _ => {}
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// Clear Screen & Welcome Banner (TUI)
+////////////////////////////////////////////////////////////////////////////////
+
+use tui::backend::CrosstermBackend;
+
+/// Clears the terminal screen for a clean start using tui.
+fn clear_screen(
+    terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>,
+) -> Result<(), DynError> {
+    terminal.clear()?;
     Ok(())
 }
 
-/// Prints a banner with ASCII art in a consistent theme color.
-fn print_welcome_banner() -> Result<(), DynError> {
+/// Prints a banner with ASCII art at the top using tui widgets.
+fn print_welcome_banner(
+    terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>,
+) -> Result<(), DynError> {
+    // Example ASCII banner (similar to before)
     let banner = r#"
   __  _  _                                                              _
  / _|(_)| |                                                            | |
@@ -97,127 +309,111 @@ fn print_welcome_banner() -> Result<(), DynError> {
 | |  | || ||  __/ | (__ | (_) || | | | | || | | | | || (_| || | | || (_| ||  __/| |
 |_|  |_||_| \___|  \___| \___/ |_| |_| |_||_| |_| |_| \__,_||_| |_| \__,_| \___||_|
     "#;
-
-    // Print banner in, say, Cyan color
-    themed_print(banner, Color::Cyan);
-    themed_print("Welcome to the File Commander CLI!\r\n", Color::Cyan);
-    Ok(())
-}
-
-/* ---------------------------------------------------------------------------
-   2) Theming / Printing Helpers
----------------------------------------------------------------------------*/
-
-/// Print text in a given color, followed by "\r\n" at the end.
-fn themed_print(text: &str, color: Color) {
-    print!("{}\r\n", text.with(color));
-}
-
-/// Prompts the user for text input, returning a `String`.
-fn prompt(message: &str) -> Result<String, DynError> {
-    print!("{message}");
-    io::stdout().flush()?; // ensure prompt is shown before input
-
-    let mut input = String::new();
-    io::stdin().read_line(&mut input)?;
-    Ok(input)
-}
-
-/// Print a "breadcrumb" line that shows the current directory path.
-fn print_breadcrumb(current_dir: &Path) -> Result<(), DynError> {
-    themed_print(
-        &format!("\r\n== Current Directory: {} ==", current_dir.display()),
-        Color::Magenta,
-    );
-    Ok(())
-}
-
-/* ---------------------------------------------------------------------------
-   3) Directory Navigation
----------------------------------------------------------------------------*/
-
-/// Change directory (cd).
-fn change_directory(current_dir: &mut PathBuf) -> Result<(), DynError> {
-    let new_dir = prompt("Enter path to change directory: ")?;
-    let new_dir = new_dir.trim();
-    let target = if new_dir.starts_with('/') {
-        // Absolute path
-        PathBuf::from(new_dir)
-    } else {
-        // Relative path
-        current_dir.join(new_dir)
-    };
-
-    if target.is_dir() {
-        *current_dir = target.canonicalize()?;
-        print!("Directory changed to {:?}\r\n", current_dir);
-    } else {
-        print!("Error: {:?} is not a valid directory.\r\n", target);
+    // We simply log the banner (it will appear in the bottom "Log" after the first draw)
+    // or you could show it in the top chunk. Here we just do one immediate draw:
+    let mut lines = banner.lines().collect::<Vec<&str>>();
+    lines.push("Welcome to the File Commander CLI!");
+    for ln in lines {
+        print!("{}{}", ln, LINE_ENDING);
     }
     Ok(())
 }
 
-/// List directory contents, similar to `ls`.
-fn list_contents(current_dir: &Path) -> Result<(), DynError> {
-    let show_hidden = prompt("Show hidden files? (y/n): ")?;
-    let show_hidden = matches_yes(&show_hidden);
+////////////////////////////////////////////////////////////////////////////////
+// Menu Actions (adapted to use AppState logs)
+////////////////////////////////////////////////////////////////////////////////
 
-    let entries = fs::read_dir(current_dir)?;
-    print!("Contents of {:?}:\r\n", current_dir);
-
-    // Flatten the iterator so we only get valid entries, ignoring errors
-    for entry in entries.flatten() {
-        let file_name = entry.file_name();
-        let file_name_str = file_name.to_string_lossy();
-        if !show_hidden && file_name_str.starts_with('.') {
-            // Skip hidden files
-            continue;
-        }
-        print!("  {}\r\n", file_name_str);
-    }
-    Ok(())
-}
-
-/* ---------------------------------------------------------------------------
-   4) Tree View
----------------------------------------------------------------------------*/
-
-/// Show all files/folders within the specified directory in a tree view.
-fn show_tree_view(current_dir: &Path) -> Result<(), DynError> {
-    let dir_input = prompt(&format!(
-        "Enter directory path for tree view (default: {}): ",
-        current_dir.display()
-    ))?;
-    let dir_path = if dir_input.trim().is_empty() {
-        current_dir.to_path_buf()
-    } else {
-        PathBuf::from(dir_input.trim())
-    };
-
-    if !dir_path.is_dir() {
-        print!("Error: {:?} is not a valid directory.\r\n", dir_path);
+/// 1) Change directory (cd).
+fn change_directory(app_state: &mut AppState) -> Result<(), DynError> {
+    // We'll read a path from the user via blocking call in the console (for brevity).
+    // Alternatively, you can integrate an input box in TUI.
+    let path = read_user_input("Enter path to change directory: ")?;
+    let trimmed = path.trim();
+    if trimmed.is_empty() {
+        app_state
+            .log_lines
+            .push("No directory provided. Aborting.".to_string());
         return Ok(());
     }
 
-    themed_print("=== Directory Tree View ===", Color::Green);
-    print_directory_tree(&dir_path, 0)?;
+    let target = if trimmed.starts_with('/') {
+        PathBuf::from(trimmed)
+    } else {
+        app_state.current_dir.join(trimmed)
+    };
+
+    if target.is_dir() {
+        app_state.current_dir = target.canonicalize()?;
+        app_state
+            .log_lines
+            .push(format!("Directory changed to {:?}", app_state.current_dir));
+    } else {
+        app_state
+            .log_lines
+            .push(format!("Error: {:?} is not a valid directory.", target));
+    }
     Ok(())
 }
 
-/// Recursively print a directory tree with indentation.
-fn print_directory_tree(dir: &Path, level: usize) -> Result<(), DynError> {
+/// 2) List directory contents, similar to `ls`.
+fn list_contents(app_state: &mut AppState) -> Result<(), DynError> {
+    let show_hidden = read_user_input("Show hidden files? (y/n): ")?;
+    let show_hidden = matches_yes(&show_hidden);
+
+    let dir = &app_state.current_dir;
+    let entries = fs::read_dir(dir)?;
+    app_state
+        .log_lines
+        .push(format!("Contents of {:?}:", dir));
+
+    for entry in entries.flatten() {
+        let file_name = entry.file_name().to_string_lossy().to_string();
+        if !show_hidden && file_name.starts_with('.') {
+            continue;
+        }
+        app_state.log_lines.push(format!("  {}", file_name));
+    }
+    Ok(())
+}
+
+/// 3) Show all files/folders within the specified directory in a tree view.
+fn show_tree_view(app_state: &mut AppState) -> Result<(), DynError> {
+    let path = read_user_input(&format!(
+        "Enter directory path for tree view (default: {}): ",
+        app_state.current_dir.display()
+    ))?;
+    let dir_path = if path.trim().is_empty() {
+        app_state.current_dir.clone()
+    } else {
+        PathBuf::from(path.trim())
+    };
+
+    if !dir_path.is_dir() {
+        app_state
+            .log_lines
+            .push(format!("Error: {:?} is not a valid directory.", dir_path));
+        return Ok(());
+    }
+
+    app_state
+        .log_lines
+        .push("=== Directory Tree View ===".to_string());
+    print_directory_tree(&dir_path, 0, app_state)?;
+    Ok(())
+}
+
+fn print_directory_tree(dir: &Path, level: usize, app_state: &mut AppState) -> Result<(), DynError> {
     let indent = "  ".repeat(level);
-    print!(
-        "{}- {}\r\n",
-        indent,
-        dir.file_name().unwrap_or_default().to_string_lossy()
-    );
+    let dir_name = dir
+        .file_name()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .to_string();
+    app_state.log_lines.push(format!("{}- {}", indent, dir_name));
 
     let entries = fs::read_dir(dir)?;
     let mut dirs = Vec::new();
     let mut files = Vec::new();
-
-    // Flatten the iterator
     for entry in entries.flatten() {
         let path = entry.path();
         if path.is_dir() {
@@ -226,54 +422,59 @@ fn print_directory_tree(dir: &Path, level: usize) -> Result<(), DynError> {
             files.push(path);
         }
     }
-    // Print subdirectories first
     for d in &dirs {
-        print_directory_tree(d, level + 1)?;
+        print_directory_tree(d, level + 1, app_state)?;
     }
-    // Print files
     for f in &files {
         let file_name = f.file_name().unwrap_or_default().to_string_lossy();
-        print!("{}  * {}\r\n", "  ".repeat(level + 1), file_name);
+        app_state
+            .log_lines
+            .push(format!("{}  * {}", "  ".repeat(level + 1), file_name));
     }
-
     Ok(())
 }
 
-/* ---------------------------------------------------------------------------
-   5) Directory Info
----------------------------------------------------------------------------*/
-
-/// Lists the size, ownership, and other relevant information about a directory.
-fn show_directory_info(current_dir: &Path) -> Result<(), DynError> {
-    let dir_input = prompt(&format!(
+/// 4) Show directory info (size, file count, ownership).
+fn show_directory_info(app_state: &mut AppState) -> Result<(), DynError> {
+    let path = read_user_input(&format!(
         "Enter directory path for info (default: {}): ",
-        current_dir.display()
+        app_state.current_dir.display()
     ))?;
-    let dir_path = if dir_input.trim().is_empty() {
-        current_dir.to_path_buf()
+    let dir_path = if path.trim().is_empty() {
+        app_state.current_dir.clone()
     } else {
-        PathBuf::from(dir_input.trim())
+        PathBuf::from(path.trim())
     };
 
     if !dir_path.is_dir() {
-        print!("Error: {:?} is not a valid directory.\r\n", dir_path);
+        app_state
+            .log_lines
+            .push(format!("Error: {:?} is not a valid directory.", dir_path));
         return Ok(());
     }
 
-    themed_print("=== Directory Info ===", Color::Blue);
-
-    // We can compute total size by summing sizes of all files.
+    app_state.log_lines.push("=== Directory Info ===".to_string());
     let (total_size, file_count, dir_count) = compute_directory_stats(&dir_path)?;
-    print!("Path: {}\r\n", dir_path.display());
-    print!("Total size (bytes): {}\r\n", total_size);
-    print!("Files: {}, Directories: {}\r\n", file_count, dir_count);
+    app_state
+        .log_lines
+        .push(format!("Path: {}", dir_path.display()));
+    app_state
+        .log_lines
+        .push(format!("Total size (bytes): {}", total_size));
+    app_state
+        .log_lines
+        .push(format!("Files: {}, Directories: {}", file_count, dir_count));
 
-    // For ownership, we use Unix-specific metadata. On non-Unix systems, adapt as needed.
-    let metadata = fs::metadata(&dir_path)?;
     #[cfg(unix)]
     {
-        print!("Owner UID: {}\r\n", metadata.uid());
-        print!("Owner GID: {}\r\n", metadata.gid());
+        use std::os::unix::fs::MetadataExt;
+        let metadata = fs::metadata(&dir_path)?;
+        app_state
+            .log_lines
+            .push(format!("Owner UID: {}", metadata.uid()));
+        app_state
+            .log_lines
+            .push(format!("Owner GID: {}", metadata.gid()));
     }
 
     Ok(())
@@ -305,84 +506,87 @@ fn compute_directory_stats(dir: &Path) -> Result<(u64, u64, u64), DynError> {
     Ok((total_size, file_count, dir_count))
 }
 
-/* ---------------------------------------------------------------------------
-   6) File Creation / Directory Creation
----------------------------------------------------------------------------*/
-
-/// Create a new file (touch).
-fn create_file(current_dir: &Path) -> Result<(), DynError> {
-    let filename = prompt("Enter name of file to create: ")?;
-    let filename = filename.trim();
-    if filename.is_empty() {
-        print!("Aborted: no filename provided.\r\n");
+/// 5) Create a new file (touch).
+fn create_file(app_state: &mut AppState) -> Result<(), DynError> {
+    let filename = read_user_input("Enter name of file to create: ")?;
+    let trimmed = filename.trim();
+    if trimmed.is_empty() {
+        app_state
+            .log_lines
+            .push("Aborted: no filename provided.".to_string());
         return Ok(());
     }
-
-    let new_file_path = current_dir.join(filename);
+    let new_file_path = app_state.current_dir.join(trimmed);
     match fs::OpenOptions::new()
         .write(true)
         .create_new(true)
         .open(&new_file_path)
     {
         Ok(_) => {
-            print!("File created at {:?}\r\n", new_file_path);
+            app_state
+                .log_lines
+                .push(format!("File created at {:?}", new_file_path));
         }
         Err(e) => {
-            print!("Could not create file: {}\r\n", e);
+            app_state
+                .log_lines
+                .push(format!("Could not create file: {}", e));
         }
     }
-
     Ok(())
 }
 
-/// Create a new directory (mkdir).
-fn create_directory(current_dir: &Path) -> Result<(), DynError> {
-    let dir_name = prompt("Enter name of directory to create: ")?;
-    let dir_name = dir_name.trim();
-    if dir_name.is_empty() {
-        print!("Aborted: no directory name provided.\r\n");
+/// 6) Create a new directory (mkdir).
+fn create_directory(app_state: &mut AppState) -> Result<(), DynError> {
+    let name = read_user_input("Enter name of directory to create: ")?;
+    let trimmed = name.trim();
+    if trimmed.is_empty() {
+        app_state
+            .log_lines
+            .push("Aborted: no directory name provided.".to_string());
         return Ok(());
     }
-
-    let new_dir_path = current_dir.join(dir_name);
+    let new_dir_path = app_state.current_dir.join(trimmed);
     match fs::create_dir(&new_dir_path) {
         Ok(_) => {
-            print!("Directory created at {:?}\r\n", new_dir_path);
+            app_state
+                .log_lines
+                .push(format!("Directory created at {:?}", new_dir_path));
         }
         Err(e) => {
-            print!("Could not create directory: {}\r\n", e);
+            app_state
+                .log_lines
+                .push(format!("Could not create directory: {}", e));
         }
     }
     Ok(())
 }
 
-/* ---------------------------------------------------------------------------
-   7) File/Directory Copy, Move, Delete, Duplicate
----------------------------------------------------------------------------*/
-
-/// Copy file/directory (cp).
-fn copy_interactive() -> Result<(), DynError> {
-    let source = prompt("Enter source file/directory: ")?;
-    let destination = prompt("Enter destination path: ")?;
+/// 7) Copy file/directory (cp).
+fn copy_interactive(app_state: &mut AppState) -> Result<(), DynError> {
+    let source = read_user_input("Enter source file/directory: ")?;
+    let destination = read_user_input("Enter destination path: ")?;
 
     let source_path = PathBuf::from(source.trim());
     let destination_path = PathBuf::from(destination.trim());
 
     if !source_path.exists() {
-        print!("Error: source {:?} does not exist.\r\n", source_path);
+        app_state
+            .log_lines
+            .push(format!("Error: source {:?} does not exist.", source_path));
         return Ok(());
     }
 
     if source_path.is_file() {
-        // Simple file copy
         match fs::copy(&source_path, &destination_path) {
-            Ok(_) => print!("File copied successfully.\r\n"),
-            Err(e) => print!("File copy failed: {}\r\n", e),
+            Ok(_) => app_state.log_lines.push("File copied successfully.".to_string()),
+            Err(e) => app_state
+                .log_lines
+                .push(format!("File copy failed: {}", e)),
         }
     } else {
-        // Directory copy
         copy_directory_recursive(&source_path, &destination_path)?;
-        print!("Directory copied successfully.\r\n");
+        app_state.log_lines.push("Directory copied successfully.".to_string());
     }
 
     Ok(())
@@ -404,70 +608,80 @@ fn copy_directory_recursive(source: &Path, dest: &Path) -> Result<(), DynError> 
     Ok(())
 }
 
-/// Move/rename file/directory (mv).
-fn move_or_rename_interactive() -> Result<(), DynError> {
-    let source = prompt("Enter source file/directory: ")?;
-    let destination = prompt("Enter new path/filename: ")?;
+/// 8) Move/rename file/directory (mv).
+fn move_or_rename_interactive(app_state: &mut AppState) -> Result<(), DynError> {
+    let source = read_user_input("Enter source file/directory: ")?;
+    let dest = read_user_input("Enter new path/filename: ")?;
 
     let source_path = PathBuf::from(source.trim());
-    let destination_path = PathBuf::from(destination.trim());
+    let dest_path = PathBuf::from(dest.trim());
 
     if !source_path.exists() {
-        print!("Error: source {:?} does not exist.\r\n", source_path);
+        app_state
+            .log_lines
+            .push(format!("Error: source {:?} does not exist.", source_path));
         return Ok(());
     }
 
-    match fs::rename(&source_path, &destination_path) {
-        Ok(_) => print!("Move/rename succeeded.\r\n"),
-        Err(e) => print!("Move/rename failed: {}\r\n", e),
+    match fs::rename(&source_path, &dest_path) {
+        Ok(_) => app_state.log_lines.push("Move/rename succeeded.".to_string()),
+        Err(e) => app_state
+            .log_lines
+            .push(format!("Move/rename failed: {}", e)),
     }
-
     Ok(())
 }
 
-/// Delete file/directory (rm).
-fn delete_interactive() -> Result<(), DynError> {
-    let target = prompt("Enter file/directory to delete: ")?;
+/// 9) Delete file/directory (rm).
+fn delete_interactive(app_state: &mut AppState) -> Result<(), DynError> {
+    let target = read_user_input("Enter file/directory to delete: ")?;
     let target_path = PathBuf::from(target.trim());
 
     if !target_path.exists() {
-        print!("Error: {:?} does not exist.\r\n", target_path);
+        app_state
+            .log_lines
+            .push(format!("Error: {:?} does not exist.", target_path));
         return Ok(());
     }
 
-    let confirm = prompt(&format!(
+    let confirm = read_user_input(&format!(
         "Are you sure you want to delete {:?}? (y/n): ",
         target_path
     ))?;
     if matches_yes(&confirm) {
         if target_path.is_dir() {
             match fs::remove_dir_all(&target_path) {
-                Ok(_) => print!("Directory deleted.\r\n"),
-                Err(e) => print!("Failed to delete directory: {}\r\n", e),
+                Ok(_) => app_state.log_lines.push("Directory deleted.".to_string()),
+                Err(e) => app_state
+                    .log_lines
+                    .push(format!("Failed to delete directory: {}", e)),
             }
         } else {
             match fs::remove_file(&target_path) {
-                Ok(_) => print!("File deleted.\r\n"),
-                Err(e) => print!("Failed to delete file: {}\r\n", e),
+                Ok(_) => app_state.log_lines.push("File deleted.".to_string()),
+                Err(e) => app_state
+                    .log_lines
+                    .push(format!("Failed to delete file: {}", e)),
             }
         }
     } else {
-        print!("Delete action canceled.\r\n");
+        app_state.log_lines.push("Delete action canceled.".to_string());
     }
     Ok(())
 }
 
-/// Duplicate a file/directory quickly by adding `_copy` or similar suffix.
-fn duplicate_interactive() -> Result<(), DynError> {
-    let source = prompt("Enter file/directory to duplicate: ")?;
+/// 10) Duplicate a file/directory quickly by adding `_copy` or similar suffix.
+fn duplicate_interactive(app_state: &mut AppState) -> Result<(), DynError> {
+    let source = read_user_input("Enter file/directory to duplicate: ")?;
     let source_path = PathBuf::from(source.trim());
 
     if !source_path.exists() {
-        print!("Error: {:?} does not exist.\r\n", source_path);
+        app_state
+            .log_lines
+            .push(format!("Error: {:?} does not exist.", source_path));
         return Ok(());
     }
 
-    // Generate new name
     let mut duplicate_path = source_path.clone();
     let file_name = duplicate_path
         .file_stem()
@@ -491,65 +705,58 @@ fn duplicate_interactive() -> Result<(), DynError> {
     } else {
         fs::copy(&source_path, &duplicate_path)?;
     }
-    print!("Duplicate created at {:?}\r\n", duplicate_path);
+    app_state
+        .log_lines
+        .push(format!("Duplicate created at {:?}", duplicate_path));
 
     Ok(())
 }
 
-/* ---------------------------------------------------------------------------
-   8) Organize Files
----------------------------------------------------------------------------*/
+/// 11) Organize files.
+fn organize_files_interactive(app_state: &mut AppState) -> Result<(), DynError> {
+    app_state.log_lines.push("=== Organize Files ===".to_string());
+    let input_dir_str = read_user_input("Enter the path of the directory to organize: ")?;
+    let input_dir = PathBuf::from(input_dir_str.trim());
 
-fn organize_files_interactive() -> Result<(), DynError> {
-    print!("\r\n=== Organize Files ===\r\n");
-
-    // Ask for input directory
-    let input_dir = prompt("Enter the path of the directory to organize: ")?;
-    let input_dir = PathBuf::from(input_dir.trim());
-
-    // Check if directory exists
     if !input_dir.is_dir() {
-        print!("Error: {:?} is not a valid directory.\r\n", input_dir);
+        app_state
+            .log_lines
+            .push(format!("Error: {:?} is not a valid directory.", input_dir));
         return Ok(());
     }
 
-    // Ask user which method of organization
-    print!("Organization Methods:\r\n");
-    print!("  1) By Extension\r\n");
-    print!("  2) By Date\r\n");
-    print!("  3) By Size\r\n");
-    let method = prompt("Select a method (1/2/3): ")?;
+    let method_str = read_user_input(
+        "Organization Methods:\r\n  1) By Extension\r\n  2) By Date\r\n  3) By Size\r\nSelect a method (1/2/3): "
+    )?;
 
-    // Ask if it's a dry run
-    let dry_run_str = prompt("Dry Run? (y/n): ")?;
+    let dry_run_str = read_user_input("Dry Run? (y/n): ")?;
     let dry_run = matches_yes(&dry_run_str);
 
     let files = collect_files(&input_dir)?;
 
-    match method.trim() {
+    match method_str.trim() {
         "1" => {
-            // By extension
             files
                 .par_iter()
-                .try_for_each(|entry| organize_by_extension(entry, &input_dir, dry_run))?;
-            print!("Organized by extension!\r\n");
+                .try_for_each(|e| organize_by_extension(e, &input_dir, dry_run, app_state))?;
+            app_state.log_lines.push("Organized by extension!".to_string());
         }
         "2" => {
-            // By date
             files
                 .par_iter()
-                .try_for_each(|entry| organize_by_date(entry, &input_dir, dry_run))?;
-            print!("Organized by date!\r\n");
+                .try_for_each(|e| organize_by_date(e, &input_dir, dry_run, app_state))?;
+            app_state.log_lines.push("Organized by date!".to_string());
         }
         "3" => {
-            // By size
             files
                 .par_iter()
-                .try_for_each(|entry| organize_by_size(entry, &input_dir, dry_run))?;
-            print!("Organized by size!\r\n");
+                .try_for_each(|e| organize_by_size(e, &input_dir, dry_run, app_state))?;
+            app_state.log_lines.push("Organized by size!".to_string());
         }
         _ => {
-            print!("Invalid method chosen. Returning to main menu.\r\n");
+            app_state
+                .log_lines
+                .push("Invalid method chosen. Returning to main menu.".to_string());
         }
     }
 
@@ -557,13 +764,12 @@ fn organize_files_interactive() -> Result<(), DynError> {
 }
 
 /// Recursively collects files (not directories) from the given directory.
-fn collect_files(dir: &Path) -> Result<Vec<DirEntry>, io::Error> {
+fn collect_files(dir: &Path) -> Result<Vec<fs::DirEntry>, io::Error> {
     let mut files = Vec::new();
     for entry in fs::read_dir(dir)? {
         let entry = entry?;
         let path = entry.path();
         if path.is_dir() {
-            // Recurse into subdirectories
             files.extend(collect_files(&path)?);
         } else {
             files.push(entry);
@@ -572,37 +778,50 @@ fn collect_files(dir: &Path) -> Result<Vec<DirEntry>, io::Error> {
     Ok(files)
 }
 
-fn organize_by_extension(entry: &DirEntry, root_dir: &Path, dry_run: bool) -> Result<(), DynError> {
+fn organize_by_extension(
+    entry: &fs::DirEntry,
+    root_dir: &Path,
+    dry_run: bool,
+    app_state: &mut AppState,
+) -> Result<(), DynError> {
     let path = entry.path();
     if let Some(ext_os) = path.extension() {
         let extension = ext_os.to_string_lossy();
         let target_dir = root_dir.join("by_extension").join(extension.to_lowercase());
-        move_file_or_dry_run(&path, &target_dir, dry_run)?;
+        move_file_or_dry_run(&path, &target_dir, dry_run, app_state)?;
     } else {
-        // Files without extension go into a "no_ext" folder
         let target_dir = root_dir.join("by_extension").join("no_ext");
-        move_file_or_dry_run(&path, &target_dir, dry_run)?;
+        move_file_or_dry_run(&path, &target_dir, dry_run, app_state)?;
     }
     Ok(())
 }
 
-fn organize_by_date(entry: &DirEntry, root_dir: &Path, dry_run: bool) -> Result<(), DynError> {
+fn organize_by_date(
+    entry: &fs::DirEntry,
+    root_dir: &Path,
+    dry_run: bool,
+    app_state: &mut AppState,
+) -> Result<(), DynError> {
     let path = entry.path();
     let metadata = fs::metadata(&path)?;
     let file_time = metadata.created().or_else(|_| metadata.modified())?;
     let datetime: DateTime<Local> = file_time.into();
     let date_str = datetime.format("%Y-%m-%d").to_string();
     let target_dir = root_dir.join("by_date").join(date_str);
-    move_file_or_dry_run(&path, &target_dir, dry_run)?;
+    move_file_or_dry_run(&path, &target_dir, dry_run, app_state)?;
     Ok(())
 }
 
-fn organize_by_size(entry: &DirEntry, root_dir: &Path, dry_run: bool) -> Result<(), DynError> {
+fn organize_by_size(
+    entry: &fs::DirEntry,
+    root_dir: &Path,
+    dry_run: bool,
+    app_state: &mut AppState,
+) -> Result<(), DynError> {
     let path = entry.path();
     let metadata = fs::metadata(&path)?;
     let file_size = metadata.len();
 
-    // E.g., "small" < 1 MB, "medium" < 100 MB, "large" >= 100 MB
     let size_label = if file_size < 1_000_000 {
         "small"
     } else if file_size < 100_000_000 {
@@ -612,28 +831,58 @@ fn organize_by_size(entry: &DirEntry, root_dir: &Path, dry_run: bool) -> Result<
     };
 
     let target_dir = root_dir.join("by_size").join(size_label);
-    move_file_or_dry_run(&path, &target_dir, dry_run)?;
+    move_file_or_dry_run(&path, &target_dir, dry_run, app_state)?;
     Ok(())
 }
 
-/// Move file to target dir, or print dry-run message.
-fn move_file_or_dry_run(path: &Path, target_dir: &Path, dry_run: bool) -> Result<(), DynError> {
+/// Move file to target dir, or log a dry-run message.
+fn move_file_or_dry_run(
+    path: &Path,
+    target_dir: &Path,
+    dry_run: bool,
+    app_state: &mut AppState,
+) -> Result<(), DynError> {
     if !dry_run {
         fs::create_dir_all(target_dir)?;
-        let target_path = target_dir.join(path.file_name().ok_or("No filename found")?);
+        let target_path = target_dir.join(
+            path.file_name()
+                .ok_or_else(|| "No filename found in path")?,
+        );
         fs::rename(path, &target_path)?;
+        app_state.log_lines.push(format!(
+            "Moved {:?} to {:?}",
+            path.file_name().unwrap(),
+            target_dir
+        ));
     } else {
-        print!("[DRY RUN] Would move {:?} to {:?}\r\n", path, target_dir);
+        app_state.log_lines.push(format!(
+            "[DRY RUN] Would move {:?} to {:?}",
+            path.file_name().unwrap(),
+            target_dir
+        ));
     }
     Ok(())
 }
 
-/* ---------------------------------------------------------------------------
-   9) Misc Helpers
----------------------------------------------------------------------------*/
+////////////////////////////////////////////////////////////////////////////////
+// Misc Helpers
+////////////////////////////////////////////////////////////////////////////////
 
 /// Helper to interpret "y"/"yes" input as true, everything else as false.
 fn matches_yes(input: &str) -> bool {
     let s = input.trim().to_lowercase();
     s == "y" || s == "yes"
+}
+
+/// A blocking function to read user input from stdin.
+/// In a more advanced TUI, you'd capture typed keys in the event loop.
+fn read_user_input(prompt_msg: &str) -> Result<String, DynError> {
+    // Print a prompt to stdout (so user knows what they're entering).
+    // This is a minimal approach—some TUI apps would have an input box instead.
+    print!("{prompt_msg}{}", LINE_ENDING);
+    io::stdout().flush()?;
+
+    let mut buf = String::new();
+    io::stdin().read_line(&mut buf)?;
+    Ok(buf)
 }

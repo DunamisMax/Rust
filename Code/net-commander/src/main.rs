@@ -1,209 +1,369 @@
-use crossterm::{
-    cursor::{Hide, MoveTo, Show},
-    event::{read, Event, KeyCode},
-    execute,
-    style::{Color, Print, ResetColor, SetForegroundColor},
-    terminal::{disable_raw_mode, enable_raw_mode, Clear, ClearType},
+////////////////////////////////////////////////////////////////////////////////
+// Cargo.toml Dependencies (add these to your [dependencies] section):
+//
+// clap = "4.3"
+// crossterm = "0.26"
+// tui = "0.20"
+// tokio = { version = "1.32", features = ["rt-multi-thread", "macros"] }
+// anyhow = "1.0"
+////////////////////////////////////////////////////////////////////////////////
+
+////////////////////////////////////////////////////////////////////////////////
+// Imports
+////////////////////////////////////////////////////////////////////////////////
+
+use std::{
+    io::{self, Write},
+    net::ToSocketAddrs,
+    process::Command,
 };
-use std::io::{self, Write};
-use std::net::ToSocketAddrs;
-use std::process::Command;
+
+use anyhow::Result;
+use clap::Parser;
+
+// Crossterm
+use crossterm::{
+    event::{self, DisableMouseCapture, EnableMouseCapture, Event as CEvent, KeyCode},
+    execute,
+    terminal::{disable_raw_mode, enable_raw_mode},
+};
+
+// TUI (tui-rs)
+use tui::{
+    backend::CrosstermBackend,
+    layout::{Constraint, Direction, Layout},
+    style::{Color, Modifier, Style},
+    text::Span,
+    widgets::{Block, Borders, List, ListItem, Paragraph},
+    Terminal,
+};
+
 use tokio::net::TcpStream;
 use tokio::time::{timeout, Duration};
 
-// ==============================
-//        MAIN ENTRY POINT
-// ==============================
+////////////////////////////////////////////////////////////////////////////////
+// Cross-Platform Line Endings
+////////////////////////////////////////////////////////////////////////////////
+
+#[cfg(windows)]
+const LINE_ENDING: &str = "\r\n";
+
+#[cfg(not(windows))]
+const LINE_ENDING: &str = "\n";
+
+////////////////////////////////////////////////////////////////////////////////
+// CLI Arguments
+////////////////////////////////////////////////////////////////////////////////
+
+#[derive(Parser, Debug)]
+#[command(author, version, about = "NetCommander (TUI-based CLI)", long_about = None)]
+struct CliArgs {
+    /// Example verbose flag
+    #[arg(long, short, help = "Enable verbose mode")]
+    verbose: bool,
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// Main (Tokio) Entry Point
+////////////////////////////////////////////////////////////////////////////////
+
 #[tokio::main]
-async fn main() {
-    // Attempt to enable raw mode for a nicer experience in the terminal.
-    if let Err(e) = enable_raw_mode() {
-        eprintln!("Failed to enable raw mode: {}", e);
+async fn main() -> Result<()> {
+    // Parse command-line arguments
+    let args = CliArgs::parse();
+    if args.verbose {
+        print!("Verbose mode enabled...{}", LINE_ENDING);
     }
 
-    // Hide cursor for a cleaner UI
-    let _ = execute!(io::stdout(), Hide);
+    // Enable raw mode to manage TUI
+    enable_raw_mode()?;
+    let mut stdout = io::stdout();
+    execute!(stdout, EnableMouseCapture)?;
+
+    // Setup TUI Terminal
+    let backend = CrosstermBackend::new(stdout);
+    let mut terminal = Terminal::new(backend)?;
+
+    // Clear the screen and display the welcome banner
+    clear_screen(&mut terminal)?;
+    print_welcome_banner(&mut terminal)?;
+
+    // Run the TUI-based main menu
+    if let Err(e) = run_app(&mut terminal).await {
+        eprintln!("Application error: {}", e);
+    }
+
+    // Before exiting, restore the terminal to normal mode
+    disable_raw_mode()?;
+    execute!(
+        terminal.backend_mut(),
+        DisableMouseCapture
+    )?;
+    Ok(())
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// TUI Application State & Main Menu
+////////////////////////////////////////////////////////////////////////////////
+
+/// Our application state for the main menu.
+struct App {
+    /// The index of the currently selected menu item.
+    selected_index: usize,
+    /// The list of menu items to display.
+    menu_items: Vec<&'static str>,
+}
+
+impl App {
+    fn new() -> Self {
+        App {
+            selected_index: 0,
+            menu_items: vec![
+                "1) Ping a host",
+                "2) DNS lookup",
+                "3) Port scan",
+                "4) Ping sweep",
+                "5) List network interfaces",
+                "6) Subnet scanning",
+                "7) Firewall & VPN detection",
+                "8) Latency monitoring (continuous ping)",
+                "9) Traceroute",
+                "Q) Quit",
+            ],
+        }
+    }
+
+    /// Moves selection up (in a circular list).
+    fn up(&mut self) {
+        if self.selected_index == 0 {
+            self.selected_index = self.menu_items.len() - 1;
+        } else {
+            self.selected_index -= 1;
+        }
+    }
+
+    /// Moves selection down (in a circular list).
+    fn down(&mut self) {
+        self.selected_index = (self.selected_index + 1) % self.menu_items.len();
+    }
+}
+
+/// Runs the main TUI loop, handling user input and rendering.
+async fn run_app<B: tui::backend::Backend>(terminal: &mut Terminal<B>) -> Result<()> {
+    let mut app = App::new();
 
     loop {
-        // Draw the main menu
-        draw_main_menu();
+        // Draw the UI
+        terminal.draw(|frame| {
+            // Split the screen into top (banner) and bottom (menu) sections
+            let chunks = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([Constraint::Length(7), Constraint::Min(1)].as_ref())
+                .split(frame.size());
 
-        // Read user input (keyboard). We do a small loop to handle non-key events.
-        let choice = if let Ok(Event::Key(key_event)) = read() {
-            if let KeyCode::Char(c) = key_event.code {
-                c
-            } else {
-                // If it's some other key event (e.g., ArrowKey), just ignore
-                // and loop again
-                continue;
-            }
-        } else {
-            // If we get a mouse event, resize event, etc., just ignore
-            continue;
-        };
+            // Top section: simple ASCII or instructions
+            let banner = Paragraph::new("Welcome to NetCommander!")
+                .style(Style::default().fg(Color::Cyan));
+            frame.render_widget(banner, chunks[0]);
 
-        // Clear screen
-        clear_screen();
+            // Bottom section: main menu items
+            let items: Vec<ListItem> = app
+                .menu_items
+                .iter()
+                .enumerate()
+                .map(|(i, &m)| {
+                    // Highlight the selected item
+                    if i == app.selected_index {
+                        ListItem::new(Span::styled(
+                            m,
+                            Style::default()
+                                .fg(Color::White)
+                                .bg(Color::Blue)
+                                .add_modifier(Modifier::BOLD),
+                        ))
+                    } else {
+                        ListItem::new(Span::raw(m))
+                    }
+                })
+                .collect();
 
-        match choice {
-            '1' => {
-                ping_host_menu().await;
-            }
-            '2' => {
-                dns_lookup_menu().await;
-            }
-            '3' => {
-                port_scan_menu().await;
-            }
-            '4' => {
-                ping_sweep_menu().await;
-            }
-            '5' => {
-                list_network_interfaces();
-                wait_for_keypress().await;
-            }
-            '6' => {
-                subnet_scan_menu().await;
-            }
-            '7' => {
-                detect_firewall_and_vpn();
-                wait_for_keypress().await;
-            }
-            '8' => {
-                latency_monitoring_menu().await;
-            }
-            '9' => {
-                traceroute_menu().await;
-            }
-            'q' | 'Q' => {
-                // Exit
-                exit_app();
-                return;
-            }
-            _ => {
-                // Unknown choice
-                print_styled_line("Unknown choice. Press any key to return.", Color::Red);
-                wait_for_keypress().await;
+            let list = List::new(items)
+                .block(Block::default().borders(Borders::ALL).title("Main Menu"));
+            frame.render_widget(list, chunks[1]);
+        })?;
+
+        // Handle user inputs (non-blocking)
+        if crossterm::event::poll(Duration::from_millis(200))? {
+            match event::read()? {
+                CEvent::Key(key_event) => match key_event.code {
+                    KeyCode::Up => {
+                        app.up();
+                    }
+                    KeyCode::Down => {
+                        app.down();
+                    }
+                    KeyCode::Enter => {
+                        // Execute based on selected menu item
+                        let choice = match app.selected_index {
+                            0 => '1',
+                            1 => '2',
+                            2 => '3',
+                            3 => '4',
+                            4 => '5',
+                            5 => '6',
+                            6 => '7',
+                            7 => '8',
+                            8 => '9',
+                            9 => 'q',
+                            _ => '?',
+                        };
+                        if !handle_menu_choice(choice).await? {
+                            // If false returned => user wants to quit
+                            return Ok(());
+                        }
+                    }
+                    KeyCode::Char('q') | KeyCode::Char('Q') => {
+                        // Quit
+                        return Ok(());
+                    }
+                    _ => {}
+                },
+                _ => {}
             }
         }
     }
 }
 
-// ==============================
-//         UI & HELPERS
-// ==============================
+////////////////////////////////////////////////////////////////////////////////
+// Handle Menu Choices
+////////////////////////////////////////////////////////////////////////////////
 
-/// Clears the screen using crossterm and moves cursor to (0,0).
-fn clear_screen() {
-    let mut stdout = io::stdout();
-    let _ = execute!(stdout, Clear(ClearType::All), MoveTo(0, 0));
+/// Returns Ok(true) if continuing, Ok(false) if user chose to quit.
+async fn handle_menu_choice(choice: char) -> Result<bool> {
+    match choice {
+        '1' => {
+            ping_host_menu().await;
+        }
+        '2' => {
+            dns_lookup_menu().await;
+        }
+        '3' => {
+            port_scan_menu().await;
+        }
+        '4' => {
+            ping_sweep_menu().await;
+        }
+        '5' => {
+            list_network_interfaces();
+            wait_for_keypress().await;
+        }
+        '6' => {
+            subnet_scan_menu().await;
+        }
+        '7' => {
+            detect_firewall_and_vpn();
+            wait_for_keypress().await;
+        }
+        '8' => {
+            latency_monitoring_menu().await;
+        }
+        '9' => {
+            traceroute_menu().await;
+        }
+        'q' | 'Q' => {
+            // Exit
+            exit_app();
+            return Ok(false);
+        }
+        _ => {
+            // Unknown choice
+            print!("Unknown choice. Press any key to return.{}", LINE_ENDING);
+            wait_for_keypress().await;
+        }
+    }
+    Ok(true)
 }
 
-/// Prints a stylized line of text in a particular color, then resets color,
-/// using `\r\n` for better cross-platform carriage-return + line-feed.
-fn print_styled_line(text: &str, color: Color) {
-    let _ = execute!(
-        io::stdout(),
-        SetForegroundColor(color),
-        Print(format!("{}\r\n", text)),
-        ResetColor
-    );
+////////////////////////////////////////////////////////////////////////////////
+// Utility Functions
+////////////////////////////////////////////////////////////////////////////////
+
+/// Clears the terminal screen for a clean start using TUI + crossterm.
+fn clear_screen<B: tui::backend::Backend>(terminal: &mut Terminal<B>) -> Result<()> {
+    terminal.clear()?;
+    Ok(())
 }
 
-/// Draws the main menu with crossterm styling.
-fn draw_main_menu() {
-    clear_screen();
-    print_styled_line("=== net-commander ===", Color::Blue);
+/// Prints a banner with ASCII art at the top using tui widgets.
+fn print_welcome_banner<B: tui::backend::Backend>(terminal: &mut Terminal<B>) -> Result<()> {
+    let banner = r#"
+              _                                                          _
+             | |                                                        | |
+ _ __    ___ | |_    ___   ___   _ __ ___   _ __ ___    __ _  _ __    __| |  ___  _ __
+| '_ \  / _ \| __|  / __| / _ \ | '_ ` _ \ | '_ ` _ \  / _` || '_ \  / _` | / _ \| '__|
+| | | ||  __/| |_  | (__ | (_) || | | | | || | | | | || (_| || | | || (_| ||  __/| |
+|_| |_| \___| \__|  \___| \___/ |_| |_| |_||_| |_| |_| \__,_||_| |_| \__,_| \___||_|
+"#,
+    .to_string();
 
-    // Replace println! with print! + "\r\n"
-    print!("1) Ping a host\r\n");
-    print!("2) DNS lookup\r\n");
-    print!("3) Port scan\r\n");
-    print!("4) Ping sweep\r\n");
-    print!("5) List network interfaces\r\n");
-    print!("6) Subnet scanning\r\n");
-    print!("7) Firewall & VPN detection\r\n");
-    print!("8) Latency monitoring (continuous ping)\r\n");
-    print!("9) Traceroute\r\n");
-    print!("Q) Quit\r\n");
-
-    print_styled_line("Please enter a choice (1-9, Q to quit):", Color::Green);
-    print!("> ");
-    let _ = io::stdout().flush();
+    terminal.draw(|f| {
+        let size = f.size();
+        let paragraph = Paragraph::new(banner)
+            .style(Style::default().fg(Color::Green));
+        f.render_widget(paragraph, size);
+    })?;
+    Ok(())
 }
 
-/// Prompts the user for input (line-based).
-/// We disable raw mode momentarily to read line-based input more easily.
-fn get_user_input(prompt: &str) -> String {
-    // Turn off raw mode to allow normal line input
-    let _ = disable_raw_mode();
-    print_styled_line(prompt, Color::Green);
-    print!("> ");
-    let _ = io::stdout().flush();
-
-    let mut input = String::new();
-    io::stdin()
-        .read_line(&mut input)
-        .expect("Failed to read line");
-
-    // Re-enable raw mode
-    let _ = enable_raw_mode();
-
-    input.trim().to_string()
-}
-
-/// Waits for a single keypress, discarding the result.
-async fn wait_for_keypress() {
+/// Waits for a single keypress (discarding the result).
+pub async fn wait_for_keypress() {
     loop {
-        if let Ok(Event::Key(_)) = read() {
+        if let Ok(CEvent::Key(_)) = event::read() {
             break;
         }
     }
 }
 
-/// Gracefully exit app: show cursor, disable raw mode, clear screen.
+/// Gracefully exit app: show a goodbye message, etc.
 fn exit_app() {
-    let _ = execute!(io::stdout(), Show);
-    let _ = disable_raw_mode();
-    clear_screen();
-    print_styled_line("Exiting net-commander. Goodbye!", Color::Blue);
+    // We can restore terminal stuff in main.
+    // Here we just print a farewell message.
+    print!("Exiting net-commander. Goodbye!{}", LINE_ENDING);
 }
 
-// ============================
-//     1) PING A SINGLE HOST
-// ============================
+////////////////////////////////////////////////////////////////////////////////
+// Sub-Menu & Network Functions (Mostly the same as your original code)
+////////////////////////////////////////////////////////////////////////////////
+
 async fn ping_host_menu() {
     let host = get_user_input("Enter host/IP to ping:");
     if host.is_empty() {
-        print_styled_line("No host specified.", Color::Red);
+        print!("No host specified.{}", LINE_ENDING);
         wait_for_keypress().await;
         return;
     }
 
-    clear_screen();
-    print_styled_line(&format!("Pinging {} ...", host), Color::Yellow);
+    print!("Pinging {} ...{}", host, LINE_ENDING);
     let output = Command::new("ping").args(get_ping_args(&host)).output();
     match output {
         Ok(o) => {
             if !o.stdout.is_empty() {
-                // Replace println! with print! + "\r\n"
-                print!("{}\r\n", String::from_utf8_lossy(&o.stdout));
+                print!("{}{}", String::from_utf8_lossy(&o.stdout), LINE_ENDING);
             }
             if !o.stderr.is_empty() {
-                eprint!("{}\r\n", String::from_utf8_lossy(&o.stderr));
+                eprint!("{}{}", String::from_utf8_lossy(&o.stderr), LINE_ENDING);
             }
         }
         Err(e) => {
-            print_styled_line(&format!("Failed to execute ping: {}", e), Color::Red);
+            print!("Failed to execute ping: {}{}", e, LINE_ENDING);
         }
     }
 
-    print_styled_line("Press any key to return to main menu...", Color::Green);
+    print!("Press any key to return to main menu...{}", LINE_ENDING);
     wait_for_keypress().await;
 }
 
 /// Returns OS-specific ping arguments (4 pings).
-/// This is simplistic; real usage might differ for each OS.
 fn get_ping_args(host: &str) -> Vec<String> {
     if cfg!(target_os = "windows") {
         vec!["-n".to_string(), "4".to_string(), host.to_string()]
@@ -212,49 +372,41 @@ fn get_ping_args(host: &str) -> Vec<String> {
     }
 }
 
-// ==========================
-//     2) DNS LOOKUP
-// ==========================
 async fn dns_lookup_menu() {
     let host = get_user_input("Enter hostname for DNS lookup:");
     if host.is_empty() {
-        print_styled_line("No hostname specified.", Color::Red);
+        print!("No hostname specified.{}", LINE_ENDING);
         wait_for_keypress().await;
         return;
     }
 
-    clear_screen();
-    print_styled_line(&format!("Resolving DNS for {} ...", host), Color::Yellow);
-
+    print!("Resolving DNS for {} ...{}", host, LINE_ENDING);
     let socket_str = format!("{}:0", host);
     match socket_str.to_socket_addrs() {
         Ok(addrs) => {
             let v: Vec<_> = addrs.collect();
             if v.is_empty() {
-                print!("No DNS records found for {}\r\n", host);
+                print!("No DNS records found for {}{}", host, LINE_ENDING);
             } else {
-                print!("Resolved addresses:\r\n");
+                print!("Resolved addresses:{}", LINE_ENDING);
                 for (i, addr) in v.iter().enumerate() {
-                    print!("  {}. {}\r\n", i + 1, addr);
+                    print!("  {}. {}{}", i + 1, addr, LINE_ENDING);
                 }
             }
         }
         Err(e) => {
-            print_styled_line(&format!("DNS lookup error: {}", e), Color::Red);
+            print!("DNS lookup error: {}{}", e, LINE_ENDING);
         }
     }
 
-    print_styled_line("Press any key to return to main menu...", Color::Green);
+    print!("Press any key to return to main menu...{}", LINE_ENDING);
     wait_for_keypress().await;
 }
 
-// ==========================
-//     3) PORT SCAN
-// ==========================
 async fn port_scan_menu() {
     let host = get_user_input("Enter host/IP to port-scan:");
     if host.is_empty() {
-        print_styled_line("No host specified.", Color::Red);
+        print!("No host specified.{}", LINE_ENDING);
         wait_for_keypress().await;
         return;
     }
@@ -264,21 +416,15 @@ async fn port_scan_menu() {
     let start_port = start_port_str.parse().unwrap_or(1);
     let end_port = end_port_str.parse().unwrap_or(1024);
 
-    clear_screen();
-    print_styled_line(
-        &format!(
-            "Scanning TCP ports on {} from {} to {}...",
-            host, start_port, end_port
-        ),
-        Color::Yellow,
+    print!(
+        "Scanning TCP ports on {} from {} to {}...{}",
+        host, start_port, end_port, LINE_ENDING
     );
 
     let mut handles = Vec::new();
     for port in start_port..=end_port {
         let host_clone = host.clone();
-        handles.push(tokio::spawn(
-            async move { scan_port(&host_clone, port).await },
-        ));
+        handles.push(tokio::spawn(async move { scan_port(&host_clone, port).await }));
     }
 
     let mut open_ports = Vec::new();
@@ -289,12 +435,12 @@ async fn port_scan_menu() {
     }
 
     if open_ports.is_empty() {
-        print!("No open TCP ports found in the specified range.\r\n");
+        print!("No open TCP ports found in the specified range.{}", LINE_ENDING);
     } else {
-        print!("Open TCP ports: {:?}\r\n", open_ports);
+        print!("Open TCP ports: {:?}{}", open_ports, LINE_ENDING);
     }
 
-    print_styled_line("Press any key to return to main menu...", Color::Green);
+    print!("Press any key to return to main menu...{}", LINE_ENDING);
     wait_for_keypress().await;
 }
 
@@ -303,17 +449,14 @@ async fn scan_port(host: &str, port: u16) -> Option<u16> {
     let addr = format!("{}:{}", host, port);
     match timeout(Duration::from_millis(500), TcpStream::connect(&addr)).await {
         Ok(Ok(_)) => Some(port), // Connected => open
-        _ => None,               // Timed out or error => closed/filtered
+        _ => None,              // Timed out or error => closed/filtered
     }
 }
 
-// ==========================
-//     4) PING SWEEP
-// ==========================
 async fn ping_sweep_menu() {
     let base_ip = get_user_input("Enter base IPv4 (e.g. 192.168.1):");
     if base_ip.is_empty() {
-        print_styled_line("No base IP specified.", Color::Red);
+        print!("No base IP specified.{}", LINE_ENDING);
         wait_for_keypress().await;
         return;
     }
@@ -323,13 +466,9 @@ async fn ping_sweep_menu() {
     let start_id = start_id_str.parse().unwrap_or(1);
     let end_id = end_id_str.parse().unwrap_or(10);
 
-    clear_screen();
-    print_styled_line(
-        &format!(
-            "Performing ping sweep from {}.{} to {}.{}",
-            base_ip, start_id, base_ip, end_id
-        ),
-        Color::Yellow,
+    print!(
+        "Performing ping sweep from {}.{} to {}.{}{}",
+        base_ip, start_id, base_ip, end_id, LINE_ENDING
     );
 
     let mut tasks = Vec::new();
@@ -352,19 +491,18 @@ async fn ping_sweep_menu() {
     }
 
     if reachable.is_empty() {
-        print!("No hosts responded to ping in that range.\r\n");
+        print!("No hosts responded to ping in that range.{}", LINE_ENDING);
     } else {
-        print!("Hosts responding to ping:\r\n");
+        print!("Hosts responding to ping:{}", LINE_ENDING);
         for ip in reachable {
-            print!("  {}\r\n", ip);
+            print!("  {}{}", ip, LINE_ENDING);
         }
     }
 
-    print_styled_line("Press any key to return to main menu...", Color::Green);
+    print!("Press any key to return to main menu...{}", LINE_ENDING);
     wait_for_keypress().await;
 }
 
-/// Calls out to the system `ping` to check if host is reachable.
 async fn is_reachable(ip: &str) -> bool {
     let output = Command::new("ping").args(get_ping_args(ip)).output();
     match output {
@@ -377,48 +515,39 @@ async fn is_reachable(ip: &str) -> bool {
     }
 }
 
-// ==============================
-//     5) NETWORK INTERFACES
-// ==============================
 fn list_network_interfaces() {
-    print_styled_line("Network Interfaces:", Color::Yellow);
-
+    print!("Network Interfaces:{}", LINE_ENDING);
     // Naive approach: shell out to ifconfig/ipconfig
     if cfg!(target_os = "windows") {
         let _ = Command::new("ipconfig").status();
     } else {
-        // On most Unix systems:
         let _ = Command::new("ifconfig").status();
-        // Or "ip addr show", depending on your environment
+        // Or "ip addr show"
     }
 }
 
-// ==============================
-//     6) SUBNET SCANNING
-// ==============================
 async fn subnet_scan_menu() {
     let cidr_input = get_user_input("Enter subnet in CIDR notation (e.g., 192.168.1.0/24):");
     if cidr_input.is_empty() {
-        print_styled_line("No subnet specified.", Color::Red);
+        print!("No subnet specified.{}", LINE_ENDING);
         wait_for_keypress().await;
         return;
     }
 
-    clear_screen();
-    print_styled_line(&format!("Subnet scanning {}", cidr_input), Color::Yellow);
+    print!("Subnet scanning {}{}", cidr_input, LINE_ENDING);
 
-    // Very naive approach: parse x.x.x.x/24, iterate .1 to .254
     let parts: Vec<&str> = cidr_input.split('/').collect();
     if parts.len() != 2 {
-        print_styled_line("Invalid CIDR format.", Color::Red);
+        print!("Invalid CIDR format.{}", LINE_ENDING);
         wait_for_keypress().await;
         return;
     }
+
     let base_ip_str = parts[0];
     let cidr_bits: u8 = parts[1].parse().unwrap_or(24);
 
     if cidr_bits != 24 {
-        print_styled_line("Only /24 subnets are supported in this demo.", Color::Red);
+        print!("Only /24 subnets are supported in this demo.{}", LINE_ENDING);
         wait_for_keypress().await;
         return;
     }
@@ -443,23 +572,21 @@ async fn subnet_scan_menu() {
     }
 
     if reachable.is_empty() {
-        print!("No hosts responded to ping in that /24 subnet.\r\n");
+        print!("No hosts responded to ping in that /24 subnet.{}", LINE_ENDING);
     } else {
         print!(
-            "Hosts responding to ping in {}/{}:\r\n",
-            base_ip_str, cidr_bits
+            "Hosts responding to ping in {}/{}:{}",
+            base_ip_str, cidr_bits, LINE_ENDING
         );
         for ip in reachable {
-            print!("  {}\r\n", ip);
+            print!("  {}{}", ip, LINE_ENDING);
         }
     }
 
-    print_styled_line("Press any key to return to main menu...", Color::Green);
+    print!("Press any key to return to main menu...{}", LINE_ENDING);
     wait_for_keypress().await;
 }
 
-/// Simplistic function to combine base IP and offset.
-/// e.g. 192.168.1.0 + offset => 192.168.1.offset
 fn increment_base_ip(base_ip: &str, offset: u8) -> String {
     let mut parts: Vec<u8> = base_ip.split('.').filter_map(|s| s.parse().ok()).collect();
     if parts.len() == 4 {
@@ -469,14 +596,10 @@ fn increment_base_ip(base_ip: &str, offset: u8) -> String {
     base_ip.to_string()
 }
 
-// ==============================
-//   7) FIREWALL & VPN DETECTION
-// ==============================
 fn detect_firewall_and_vpn() {
-    print_styled_line("Detecting Firewall & VPN ...", Color::Yellow);
+    print!("Detecting Firewall & VPN ...{}", LINE_ENDING);
 
     if cfg!(target_os = "windows") {
-        // Check Windows firewall status
         let firewall_status = Command::new("netsh")
             .args(["advfirewall", "show", "allprofiles"])
             .output();
@@ -484,86 +607,77 @@ fn detect_firewall_and_vpn() {
             Ok(o) => {
                 let out = String::from_utf8_lossy(&o.stdout).to_lowercase();
                 if out.contains("state on") {
-                    print!("Windows firewall appears to be ON.\r\n");
+                    print!("Windows firewall appears to be ON.{}", LINE_ENDING);
                 } else if out.contains("state off") {
-                    print!("Windows firewall appears to be OFF.\r\n");
+                    print!("Windows firewall appears to be OFF.{}", LINE_ENDING);
                 } else {
-                    print!("Could not determine Windows firewall state.\r\n");
+                    print!("Could not determine Windows firewall state.{}", LINE_ENDING);
                 }
             }
             Err(e) => {
-                print!("Error checking Windows firewall: {}\r\n", e);
+                print!("Error checking Windows firewall: {}{}", e, LINE_ENDING);
             }
         }
 
-        // VPN detection: naive check for "ipconfig" lines containing "TUN" or "PPP"
         let vpn_check = Command::new("ipconfig").output();
         match vpn_check {
             Ok(o) => {
                 let out = String::from_utf8_lossy(&o.stdout).to_lowercase();
                 if out.contains("tun") || out.contains("ppp") || out.contains("vpn") {
-                    print!("A VPN interface might be active.\r\n");
+                    print!("A VPN interface might be active.{}", LINE_ENDING);
                 } else {
-                    print!("No obvious VPN interface found.\r\n");
+                    print!("No obvious VPN interface found.{}", LINE_ENDING);
                 }
             }
             Err(e) => {
-                print!("Error checking VPN: {}\r\n", e);
+                print!("Error checking VPN: {}{}", e, LINE_ENDING);
             }
         }
     } else {
-        // On Linux/macOS, check common firewall services or iptables
         let firewall_status = Command::new("systemctl")
             .args(["is-active", "firewalld"])
             .output();
         if let Ok(o) = firewall_status {
             let out = String::from_utf8_lossy(&o.stdout).to_lowercase();
             if out.contains("active") {
-                print!("firewalld service is ACTIVE.\r\n");
+                print!("firewalld service is ACTIVE.{}", LINE_ENDING);
             } else {
-                print!("firewalld service is not active or not found.\r\n");
+                print!("firewalld service is not active or not found.{}", LINE_ENDING);
             }
         }
 
-        // Check for iptables
         let iptables_check = Command::new("iptables").arg("-L").output();
         if let Ok(o) = iptables_check {
             let out = String::from_utf8_lossy(&o.stdout);
-            print!("`iptables -L` returned:\r\n{}\r\n", out);
+            print!("`iptables -L` returned:{}{}{}", LINE_ENDING, out, LINE_ENDING);
         }
 
-        // VPN check: naive check for 'tun0' or 'ppp0' or 'wg0'
         let ifconfig_check = Command::new("ifconfig").output();
         if let Ok(o) = ifconfig_check {
             let out = String::from_utf8_lossy(&o.stdout).to_lowercase();
             if out.contains("tun0") || out.contains("ppp0") || out.contains("wg0") {
-                print!("A VPN or tunneling interface might be active.\r\n");
+                print!("A VPN or tunneling interface might be active.{}", LINE_ENDING);
             } else {
-                print!("No obvious VPN interface found (tun0/ppp0/wg0).\r\n");
+                print!("No obvious VPN interface found (tun0/ppp0/wg0).{}", LINE_ENDING);
             }
         }
     }
 }
 
-// ==============================
-//    8) LATENCY MONITORING
-// ==============================
 async fn latency_monitoring_menu() {
     let host = get_user_input("Enter host/IP for continuous ping:");
     if host.is_empty() {
-        print_styled_line("No host specified.", Color::Red);
+        print!("No host specified.{}", LINE_ENDING);
         wait_for_keypress().await;
         return;
     }
 
-    clear_screen();
-    print_styled_line(
-        &format!("Latency monitoring for {} (press any key to stop)...", host),
-        Color::Yellow,
+    print!(
+        "Latency monitoring for {} (press any key to stop)...{}",
+        host, LINE_ENDING
     );
-    print!("Pinging once per second, measuring round-trip time...\r\n");
+    print!("Pinging once per second...{}", LINE_ENDING);
 
-    // We'll set up a loop that runs until a key is pressed.
     loop {
         let output = Command::new("ping")
             .args(get_latency_ping_args(&host))
@@ -571,39 +685,32 @@ async fn latency_monitoring_menu() {
 
         match output {
             Ok(o) => {
-                // Attempt to parse out round-trip time from the last line (naive).
-                // We do a short 1-ping check each iteration.
                 let out = String::from_utf8_lossy(&o.stdout).to_string();
                 if let Some(line) = out.lines().last() {
-                    print!("{}\r\n", line);
+                    print!("{}{}", line, LINE_ENDING);
                 } else {
-                    print!("{}\r\n", out);
+                    print!("{}{}", out, LINE_ENDING);
                 }
             }
             Err(e) => {
-                print_styled_line(&format!("Ping error: {}", e), Color::Red);
+                print!("Ping error: {}{}", e, LINE_ENDING);
             }
         }
 
         // Check if a key was pressed. If so, break out.
         if crossterm::event::poll(Duration::from_millis(100)).unwrap() {
-            if let Ok(Event::Key(_)) = read() {
+            if let Ok(CEvent::Key(_)) = event::read() {
                 break;
             }
         }
-
         // Sleep for ~1 second between pings
         tokio::time::sleep(Duration::from_secs(1)).await;
     }
 
-    print_styled_line(
-        "Stopped. Press any key to return to main menu...",
-        Color::Green,
-    );
+    print!("Stopped. Press any key to return to main menu...{}", LINE_ENDING);
     wait_for_keypress().await;
 }
 
-/// OS-specific arguments for *one* ping, so we can measure repeated pings in a loop.
 fn get_latency_ping_args(host: &str) -> Vec<String> {
     if cfg!(target_os = "windows") {
         // -n 1 => one ping
@@ -614,46 +721,65 @@ fn get_latency_ping_args(host: &str) -> Vec<String> {
     }
 }
 
-// ==============================
-//        9) TRACEROUTE
-// ==============================
 async fn traceroute_menu() {
     let host = get_user_input("Enter host for traceroute:");
     if host.is_empty() {
-        print_styled_line("No host specified.", Color::Red);
+        print!("No host specified.{}", LINE_ENDING);
         wait_for_keypress().await;
         return;
     }
 
-    clear_screen();
-    print_styled_line(
-        &format!("Performing traceroute to {} ...", host),
-        Color::Yellow,
+    print!(
+        "Performing traceroute to {} ...{}",
+        host, LINE_ENDING
     );
 
-    // On Windows, the command is "tracert"; on Unix-like systems, "traceroute".
     if cfg!(target_os = "windows") {
         let output = Command::new("tracert").arg(host.clone()).output();
         match output {
             Ok(o) => {
-                print!("{}\r\n", String::from_utf8_lossy(&o.stdout));
+                print!("{}{}", String::from_utf8_lossy(&o.stdout), LINE_ENDING);
             }
             Err(e) => {
-                print_styled_line(&format!("Failed to run tracert: {}", e), Color::Red);
+                print!("Failed to run tracert: {}{}", e, LINE_ENDING);
             }
         }
     } else {
         let output = Command::new("traceroute").arg(host.clone()).output();
         match output {
             Ok(o) => {
-                print!("{}\r\n", String::from_utf8_lossy(&o.stdout));
+                print!("{}{}", String::from_utf8_lossy(&o.stdout), LINE_ENDING);
             }
             Err(e) => {
-                print_styled_line(&format!("Failed to run traceroute: {}", e), Color::Red);
+                print!("Failed to run traceroute: {}{}", e, LINE_ENDING);
             }
         }
     }
 
-    print_styled_line("Press any key to return to main menu...", Color::Green);
+    print!("Press any key to return to main menu...{}", LINE_ENDING);
     wait_for_keypress().await;
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// get_user_input Helper
+////////////////////////////////////////////////////////////////////////////////
+
+/// Prompts the user for input in "cooked" mode (temporarily disabling raw mode).
+fn get_user_input(prompt: &str) -> String {
+    // Disable raw mode so we can do normal line-based input
+    let _ = disable_raw_mode();
+
+    print!("{}{}", prompt, LINE_ENDING);
+    print!("> ");
+    let _ = io::stdout().flush();
+
+    let mut input = String::new();
+    io::stdin()
+        .read_line(&mut input)
+        .expect("Failed to read line");
+
+    // Re-enable raw mode for TUI
+    let _ = enable_raw_mode();
+
+    input.trim().to_string()
 }

@@ -13,5 +13,6 @@ chrono = "*"
 figlet-rs = "*"
 rand = "*"
 clap = { version = "*", features = ["derive"] }
-crossterm = "*"
+ratatui = "*"
 tokio = { version = "*", features = ["full"] }
+crossterm = "*"

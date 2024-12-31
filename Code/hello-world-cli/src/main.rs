@@ -1,33 +1,94 @@
+////////////////////////////////////////////////////////////////////////////////
+// Imports
+////////////////////////////////////////////////////////////////////////////////
+
 use anyhow::{Context, Result};
+use clap::Parser;
 use crossterm::{
-    cursor::MoveTo,
+    event::EnableMouseCapture,
     execute,
-    style::{style, Color, Stylize},
-    terminal::{Clear, ClearType},
+    terminal::{disable_raw_mode, enable_raw_mode},
 };
 use rand::{seq::SliceRandom, Rng};
 use std::io::{self, Write};
-use tokio::main;
+use tui::{
+    backend::CrosstermBackend,
+    layout::{Constraint, Direction, Layout},
+    style::{Color, Style},
+    widgets::{Block, Borders, Paragraph},
+    Terminal,
+};
 
-/// Asynchronous entry point using Tokio.
-#[main]
+////////////////////////////////////////////////////////////////////////////////
+// Cross-Platform Line Endings
+////////////////////////////////////////////////////////////////////////////////
+
+#[cfg(windows)]
+const LINE_ENDING: &str = "\r\n";
+
+#[cfg(not(windows))]
+const LINE_ENDING: &str = "\n";
+
+////////////////////////////////////////////////////////////////////////////////
+// CLI Arguments (Example)
+////////////////////////////////////////////////////////////////////////////////
+
+#[derive(Parser, Debug)]
+#[command(author, version, about = "Multilingual Hello-World TUI", long_about = None)]
+struct CliArgs {
+    /// An optional flag to demonstrate Clap usage
+    #[arg(long, short, help = "Enable verbose mode")]
+    verbose: bool,
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// Main (Tokio) Entry Point
+////////////////////////////////////////////////////////////////////////////////
+
+#[tokio::main]
 async fn main() -> Result<()> {
-    clear_screen()?;
-    print_welcome_banner()?;
-    prompt_for_name_and_greet()?;
-    Ok(())
-}
+    // 1) Parse CLI arguments
+    let args = CliArgs::parse();
+    if args.verbose {
+        print!("Verbose mode enabled...{}", LINE_ENDING);
+    }
 
-/// Clears the terminal screen for a clean start using crossterm.
-fn clear_screen() -> Result<()> {
+    // 2) Enable raw mode for TUI
+    enable_raw_mode()?;
     let mut stdout = io::stdout();
-    execute!(stdout, Clear(ClearType::All), MoveTo(0, 0))?;
+    execute!(stdout, EnableMouseCapture)?;
+    let backend = CrosstermBackend::new(stdout);
+    let mut terminal = Terminal::new(backend)?;
+
+    // 3) Clear the screen & display welcome banner via TUI
+    clear_screen(&mut terminal)?;
+    print_welcome_banner(&mut terminal)?;
+
+    // 4) Temporarily disable raw mode to gather user input (name)
+    disable_raw_mode()?;
+    let name = prompt_for_name()?;
+    enable_raw_mode()?;
+
+    // 5) Greet the user (random language) in TUI
+    greet_in_tui(&mut terminal, &name)?;
+
+    // 6) Cleanly exit
+    disable_raw_mode()?;
     Ok(())
 }
 
-/// Prints a welcome banner with ASCII art in a random color.
-/// Also provides a short usage hint.
-fn print_welcome_banner() -> Result<()> {
+////////////////////////////////////////////////////////////////////////////////
+// TUI "Clear Screen" and "Welcome Banner"
+////////////////////////////////////////////////////////////////////////////////
+
+fn clear_screen(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>) -> Result<()> {
+    // TUI-based clearing
+    terminal.clear()?;
+    Ok(())
+}
+
+fn print_welcome_banner(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>) -> Result<()> {
+    // Example ASCII banner
     let banner = r#"
  _            _  _                                 _      _
 | |          | || |                               | |    | |
@@ -35,20 +96,29 @@ fn print_welcome_banner() -> Result<()> {
 | '_ \  / _ \| || | / _ \  \ \ /\ / / / _ \ | '__|| | / _` |
 | | | ||  __/| || || (_) |  \ V  V / | (_) || |   | || (_| |
 |_| |_| \___||_||_| \___/    \_/\_/   \___/ |_|   |_| \__,_|
-"#;
+    "#;
 
-    cprintln(banner)?;
+    // Render banner in the entire terminal area
+    terminal.draw(|frame| {
+        let size = frame.size();
+        let paragraph = Paragraph::new(banner)
+            .block(Block::default().borders(Borders::NONE))
+            .style(Style::default().fg(Color::Cyan));
+        frame.render_widget(paragraph, size);
+    })?;
+
+    print!("Welcome to the Interactive, Multilingual Greeter!{}", LINE_ENDING);
     Ok(())
 }
 
-/// Prompts the user for their name and greets them in a random language/color.
-///
-/// If the user provides no input, it defaults to greeting "World".
-fn prompt_for_name_and_greet() -> Result<()> {
-    cprintln("Welcome to the Interactive, Multilingual Greeter!\r\n")?;
+////////////////////////////////////////////////////////////////////////////////
+// User Input (Name) + Greeting
+////////////////////////////////////////////////////////////////////////////////
 
-    // Prompt user for their name
-    print!("What is your name?\r\n");
+/// Prompts the user for their name.
+/// If no input is given, returns "World" as a default.
+fn prompt_for_name() -> Result<String> {
+    print!("What is your name?{}", LINE_ENDING);
     io::stdout().flush().context("Failed to flush stdout")?;
 
     let mut name = String::new();
@@ -58,30 +128,56 @@ fn prompt_for_name_and_greet() -> Result<()> {
 
     let trimmed = name.trim();
     if trimmed.is_empty() {
-        greet("World")?;
+        Ok("World".to_string())
     } else {
-        greet(trimmed)?;
+        Ok(trimmed.to_string())
     }
+}
+
+/// Draws a random greeting for `name` in a random color using TUI.
+fn greet_in_tui(
+    terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>,
+    name: &str,
+) -> Result<()> {
+    let greeting_line = pick_random_greeting(name);
+
+    terminal.draw(|frame| {
+        // Split the screen to draw in a separate region
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Min(3), Constraint::Length(1)].as_ref())
+            .split(frame.size());
+
+        // Random color from tui::style::Color
+        let color = random_tui_color();
+
+        let paragraph = Paragraph::new(greeting_line)
+            .block(Block::default().borders(Borders::ALL))
+            .style(Style::default().fg(color));
+        frame.render_widget(paragraph, chunks[0]);
+    })?;
+
     Ok(())
 }
 
-/// Selects a random greeting from a list of world languages and prints it in a random color.
-fn greet(name: &str) -> Result<()> {
+////////////////////////////////////////////////////////////////////////////////
+// Greeting Logic
+////////////////////////////////////////////////////////////////////////////////
+
+fn pick_random_greeting(name: &str) -> String {
     let greetings = [
         "Mandarin Chinese: 你好 (Nǐ hǎo)",
         "Spanish: Hola",
         "English: Hello",
         "Hindi: नमस्ते (Namaste)",
-        "Arabic (Modern Standard): مرحبا (Marḥaban)",
+        "Arabic: مرحبا (Marḥaban)",
         "Bengali: নমস্কার (Nomoshkar)",
         "Portuguese: Olá",
         "Russian: Привет (Privet)",
         "Japanese: こんにちは (Konnichiwa)",
         "Punjabi: ਸਤ ਸ੍ਰੀ ਅਕਾਲ (Sat Srī Akāl)",
         "German: Hallo",
-        "Javanese: Halo",
-        "Wu Chinese (Shanghainese): 侬好 (Nóng hó)",
-        "Malay (Bahasa Melayu): Hai",
+        "Malay: Hai",
         "Telugu: నమస్కారం (Namaskāraṁ)",
         "Vietnamese: Xin chào",
         "Korean: 안녕하세요 (Annyeonghaseyo)",
@@ -102,7 +198,6 @@ fn greet(name: &str) -> Result<()> {
         "Zulu: Sawubona",
         "Greek: Γεια σου (Geia sou)",
         "Dutch: Hallo",
-        "Haitian Creole: Bonjou",
         "Tagalog: Kamusta",
         "Hungarian: Szia",
         "Czech: Ahoj",
@@ -125,39 +220,18 @@ fn greet(name: &str) -> Result<()> {
         "Afrikaans: Hallo",
     ];
 
-    // Choose a random greeting
     let mut rng = rand::thread_rng();
-    let greeting = greetings
-        .choose(&mut rng)
-        .unwrap_or(&"English: Hello (Fallback)");
-
-    let message = format!("{} — {}!", greeting, name);
-    cprintln(&message)?;
-    Ok(())
+    let greeting = greetings.choose(&mut rng).unwrap_or(&"English: Hello");
+    format!("{} — {}!", greeting, name)
 }
 
-/// Prints the given text in a random color using crossterm styling.
-///
-/// This function appends a carriage-return + line-feed (`\r\n`) at the end of `text`.
-fn cprintln(text: &str) -> Result<()> {
-    let color = random_color();
-    let styled = style(text).with(color).bold();
-    print!("{}\r\n", styled);
-    Ok(())
-}
+////////////////////////////////////////////////////////////////////////////////
+// Random TUI Color
+////////////////////////////////////////////////////////////////////////////////
 
-/// Returns a random color from a standard 8 color list
-fn random_color() -> Color {
-    let colors = [
-        Color::Red,
-        Color::Green,
-        Color::Yellow,
-        Color::Blue,
-        Color::Magenta,
-        Color::Cyan,
-        Color::White,
-        Color::Grey,
-    ];
+fn random_tui_color() -> Color {
+    use Color::*;
+    let colors = [Red, Green, Yellow, Blue, Magenta, Cyan, White, Gray];
 
     let mut rng = rand::thread_rng();
     let idx = rng.gen_range(0..colors.len());
