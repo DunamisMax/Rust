@@ -92,10 +92,7 @@ async fn main() -> Result<()> {
     disable_raw_mode()?; // Turn off raw mode to let user read the prompt, etc.
 
     // Give user a moment to see the welcome banner:
-    print!(
-        "Press Enter to launch the Task Manager...{}",
-        LINE_ENDING
-    );
+    print!("Press Enter to launch the Task Manager...{}", LINE_ENDING);
     io::stdout().flush()?;
     let mut buf = String::new();
     io::stdin().read_line(&mut buf)?;
@@ -114,11 +111,7 @@ async fn main() -> Result<()> {
         execute!(terminal.backend_mut(), DisableMouseCapture)?;
     }
     disable_raw_mode()?;
-    execute!(
-        terminal.backend_mut(),
-        Clear(ClearType::All),
-        MoveTo(0, 0)
-    )?;
+    execute!(terminal.backend_mut(), Clear(ClearType::All), MoveTo(0, 0))?;
     print!("Goodbye!{}", LINE_ENDING);
 
     Ok(())
@@ -288,11 +281,14 @@ fn parse_proc_stat(pid: u32) -> Result<ProcessInfo> {
     // parts[3] = ppid
     // ...
     // parts[22] = RSS usage or similar (not exactly memory in KB, but let's approximate)
-    let name = parts[1].trim_start_matches('(').trim_end_matches(')').to_string();
+    let name = parts[1]
+        .trim_start_matches('(')
+        .trim_end_matches(')')
+        .to_string();
     let state = parts[2].to_string();
     let ppid: u32 = parts[3].parse().unwrap_or(0);
 
-    // The stat file's 24th field (index 23) is `rss`, but for a rough "Memory (KB)" we might read from /proc/<pid>/statm or use a factor. 
+    // The stat file's 24th field (index 23) is `rss`, but for a rough "Memory (KB)" we might read from /proc/<pid>/statm or use a factor.
     // For simplicity, just use RSS from stat.
     let rss: i64 = parts[23].parse().unwrap_or(0);
     // Typically, rss * page_size gives memory in bytes. For a rough KB measure, do:
@@ -356,7 +352,9 @@ fn draw_welcome_screen(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>
             .map(|line| {
                 Spans::from(Span::styled(
                     line,
-                    Style::default().fg(Color::Green).add_modifier(Modifier::BOLD),
+                    Style::default()
+                        .fg(Color::Green)
+                        .add_modifier(Modifier::BOLD),
                 ))
             })
             .collect::<Vec<_>>();
@@ -388,11 +386,15 @@ fn draw_welcome_screen(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>
 
 fn get_banner_lines() -> Vec<Spans<'static>> {
     vec![
-        Spans::from(vec![
-            Span::styled("Rust Linux Task Manager", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
-        ]),
-        Spans::from(vec![
-            Span::styled("Press 'q' or 'Esc' to quit.", Style::default().fg(Color::White)),
-        ]),
+        Spans::from(vec![Span::styled(
+            "Rust Linux Task Manager",
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        )]),
+        Spans::from(vec![Span::styled(
+            "Press 'q' or 'Esc' to quit.",
+            Style::default().fg(Color::White),
+        )]),
     ]
 }

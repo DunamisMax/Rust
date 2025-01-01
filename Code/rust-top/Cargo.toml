@@ -2,5 +2,16 @@
 name = "rust-top"
 version = "0.1.0"
 edition = "2021"
+license = "MIT"
+description = "A TUI-based Task Manager for Linux written in Rust."
 
 [dependencies]
+anyhow = "*"
+# Clap 4.x with derive macros
+clap = { version = "*", features = ["derive"] }
+# crossterm for terminal handling
+crossterm = "*"
+# tui for UI widgets
+tui = "*"
+# tokio with multithread + macros for async/await
+tokio = { version = "*", features = ["rt-multi-thread", "macros"] }
