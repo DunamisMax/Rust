@@ -1,4 +1,3 @@
-```markdown
 # Rust
 
 A **collection** of Rust-based projects maintained by [dunamismax](https://dunamismax.com). This repository showcases various **standalone** command-line applications, each in its own folder under the [`Code/`](Code) directory. Whether you’re exploring simple CLI workflows or more advanced TUI experiments, you’ll find examples of modern Rust patterns and practices here.
@@ -7,13 +6,15 @@ A **collection** of Rust-based projects maintained by [dunamismax](https://dunam
 
 ## Table of Contents
 
-- [Overview](#overview)
-- [Repository Structure](#repository-structure)
-- [Subprojects](#subprojects)
-- [Getting Started](#getting-started)
-- [Contributing](#contributing)
-- [License](#license)
-- [Contact](#contact)
+- [Rust](#rust)
+  - [Table of Contents](#table-of-contents)
+  - [Overview](#overview)
+  - [Repository Structure](#repository-structure)
+  - [Subprojects](#subprojects)
+  - [Getting Started](#getting-started)
+  - [Contributing](#contributing)
+  - [License](#license)
+  - [Contact](#contact)
 
 ---
 
