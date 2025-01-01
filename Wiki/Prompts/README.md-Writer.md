@@ -46,23 +46,26 @@ Here are the requirements and backstory:
 
 **If you understand these instructions, please acknowledge and ask the user to provide the project code or details so you can craft a README.md accordingly.**
 
-my rust-top README.md sample for reference, all readme.md files that you write should follow this same flow and look like this:
+Below is my weather-cli README.md sample for reference, all readme.md files that you write should follow this same flow and look like this:
 
-# rust-top
+# weather-cli
 
-A **Rust-based** “top-like” command-line tool that displays real-time information about running processes on a Linux system, including CPU usage and memory consumption. **`rust-top`** is part of the larger [Rust](https://github.com/dunamismax/Rust) repository maintained by [dunamismax](https://dunamismax.com).
+A **Rust-based** command-line application that fetches weather data from the [OpenWeatherMap](https://openweathermap.org/) API using a TUI (text-based user interface). **`weather-cli`** is part of the [Rust](https://github.com/dunamismax/Rust) repository maintained by [dunamismax](https://dunamismax.com).
 
 ---
 
 ## Table of Contents
 
-- [rust-top](#rust-top)
+- [weather-cli](#weather-cli)
   - [Table of Contents](#table-of-contents)
   - [Overview](#overview)
   - [Features](#features)
   - [Installation](#installation)
   - [Usage](#usage)
-  - [Repository Structure](#repository-structure)
+    - [Command-Line Arguments](#command-line-arguments)
+    - [Environment Variable](#environment-variable)
+  - [Examples](#examples)
+  - [Project Structure](#project-structure)
   - [Contributing](#contributing)
   - [License](#license)
   - [Contact](#contact)
@@ -71,126 +74,168 @@ A **Rust-based** “top-like” command-line tool that displays real-time inform
 
 ## Overview
 
-**`rust-top`** is a TUI (text-based user interface) application similar to the standard Linux `top` command. It leverages the `/proc` filesystem to gather process metrics and displays them in an interactive UI. By default, it shows process details such as:
-
-- **PID** (Process ID)
-- **Name**
-- **State**
-- **PPID** (Parent Process ID)
-- **CPU%** usage
-- **Memory** (in human-readable format)
-
-This project demonstrates Rust’s concurrency, async/await patterns with [`tokio`][tokio-url], and TUI frameworks (`crossterm` + `tui`).
+**`weather-cli`** is a small **Rust** application that interacts with [OpenWeatherMap’s API](https://openweathermap.org/) to fetch current weather data for any city or ZIP code. It uses a simple TUI (terminal user interface) powered by `crossterm` and `tui` to display both a welcome screen (prompting for location input) and the resulting weather information.
 
 ---
 
 ## Features
 
-1. **Real-Time Process Monitoring**
-   Refreshes the process list at a specified interval (default: 2000 ms).
+1. **TUI Welcome Screen**
+   - Displays an ASCII banner and prompts for user input (city or ZIP code) if not specified via command line.
 
-2. **CPU & Memory Stats**
-   Displays approximate CPU usage and memory footprint for each process, sorted in descending order by memory usage.
+2. **Fetch Weather by City or ZIP**
+   - Automatically determines whether the input is numeric (ZIP) or alphabetical (city).
 
-3. **Responsive TUI**
-   Uses non-blocking keyboard input so you can **press** `q`, `Esc`, **Ctrl-C**, or **SHIFT+Q** to **quit** gracefully.
+3. **Detailed Weather Display**
+   - Temperature, pressure, humidity, wind speed, sunrise/sunset times, etc.
 
-4. **Mouse Capture (Optional)**
-   Run with `--mouse` to enable mouse input capture (though minimal mouse interaction is implemented by default).
+4. **Units Selection**
+   - Supports **imperial** (°F), **metric** (°C), and **standard** (Kelvin) temperature scales.
 
-5. **Cross-Platform Friendly**
-   Compiles on non-Linux systems but will show an empty process list. The main functionality is Linux-specific via `/proc`.
+5. **Prompted Exit**
+   - After displaying weather info, waits for user input (press Enter) before closing.
 
 ---
 
 ## Installation
 
-1. **Clone** the parent repository:
+1. **Clone** the [parent Rust repository][rust-repo-url]:
 
    ```bash
    git clone https://github.com/dunamismax/Rust.git
-   cd Rust/Code/rust-top
+   cd Rust/Code/weather-cli
    ```
 
-2. **Build** using Cargo (Rust’s package manager):
+2. **Create or Update `.env`** (optional but recommended):
+   Inside `weather-cli/`, create a file named `.env` with your [OpenWeatherMap API Key][owm-signup-url]:
+
+   ```env
+   OWM_API_KEY=YOUR_API_KEY_HERE
+   ```
+
+   Alternatively, you can set the environment variable `OWM_API_KEY` in your shell or system environment.
+
+3. **Build** the application using Cargo:
 
    ```bash
    cargo build --release
    ```
 
-3. **(Optional)** Enable additional features (mouse, more logging, etc.) by updating the `[dependencies]` or feature flags in `Cargo.toml`.
+   This will produce a binary in `./target/release/weather-cli`.
 
 ---
 
 ## Usage
 
-1. **Run** the application:
+From the **`weather-cli`** directory, run:
+
+```bash
+cargo run --release
+```
+
+If you already have a `weather-cli` binary, you can also just run:
+
+```bash
+./target/release/weather-cli
+```
+
+Upon execution, the TUI will display a welcome banner. You can either provide a location directly (e.g., `--location Boston`) or let the app prompt you for a **city name** or **ZIP code**.
+
+### Command-Line Arguments
+
+- **`--location`** (optional)
+  A city or ZIP code. If omitted, the TUI will prompt for it.
+- **`-c` / `--country`** (optional)
+  Default is `"us"` (United States). Can be changed to `"uk"`, `"de"`, etc.
+- **`-u` / `--units`** (optional)
+  Default is `"imperial"` (°F). Other valid values: `"metric"` (°C) or `"standard"` (Kelvin).
+
+### Environment Variable
+
+- **`OWM_API_KEY`**
+  An [OpenWeatherMap API key][owm-signup-url]. Must be set in `.env` or in your environment.
+
+---
+
+## Examples
+
+1. **Fetch Weather for London (Prompted)**
 
    ```bash
    cargo run --release
    ```
 
-   or
+   - The app will display a banner and then ask for a city or ZIP code.
+   - Enter `London` and press Enter to view London’s current weather.
+
+2. **Specify a ZIP Code & Country**
 
    ```bash
-   ./target/release/rust-top
+   cargo run --release -- --location 10001 --country us
    ```
 
-2. **Key Flags**:
-   - `--refresh-ms <millis>`: How often to refresh (default: 2000 ms).
-   - `--mouse`: Enable mouse capture.
+   - Uses ZIP code `10001` in the United States.
 
-3. **Controls**:
-   - **q** / **Esc** / **Ctrl-C**: Quit the application.
-   - **SHIFT+Q**: Also quits.
-
-4. **Example**:
+3. **Metric Units**
 
    ```bash
-   ./rust-top --refresh-ms 1000 --mouse
+   cargo run --release -- --location Berlin --country de --units metric
    ```
+
+   - Displays temperatures in Celsius.
 
 ---
 
-## Repository Structure
+## Project Structure
 
-The **`rust-top`** folder is one of several standalone Rust applications located within [Code/](https://github.com/dunamismax/Rust/tree/main/Code) in the main [Rust repository](https://github.com/dunamismax/Rust). Each subfolder contains its own Cargo project and its own `README.md`. The overall layout is:
+Below is a high-level look at the **`weather-cli`** folder within the main [Rust repository][rust-repo-url]:
 
 ```bash
 Rust/
 ├─ Code/
 │  ├─ hello-world-cli/
 │  ├─ net-commander/
-│  ├─ reminders-cli/
+│  ├─ rust-top/
 │  ├─ ...
-│  └─ rust-top/
+│  └─ weather-cli/
 │     ├─ src/
+│     ├─ .env.example      <-- Sample environment file (if provided)
 │     ├─ Cargo.toml
-│     └─ README.md  <-- You are here!
+│     └─ README.md         <-- You are here!
 ├─ Wiki/
 │  ├─ ...
 ├─ LICENSE
-└─ README.md         <-- main repository README
+└─ README.md
 ```
+
+Each subfolder in `Code/` is an independent Rust Cargo project with its own `README.md`.
 
 ---
 
 ## Contributing
 
-Contributions are welcome! If you encounter a bug or want to request a feature, please open an [issue](https://github.com/dunamismax/Rust/issues) or a [pull request](https://github.com/dunamismax/Rust/pulls) in the main repository. Make sure to follow the project’s coding style and guidelines.
+Contributions are welcome! If you have a bug to report or a feature to request, please open an [issue][issues-url] or a [pull request][pulls-url] in the main repository. When contributing, follow the existing code style and guidelines.
 
 ---
 
 ## License
 
-This project is licensed under the [MIT License](https://github.com/dunamismax/Rust/blob/main/LICENSE). Please see the [`LICENSE` file](https://github.com/dunamismax/Rust/blob/main/LICENSE) in the root of the main repository for details.
+This project is licensed under the [MIT License][license-url]. Please see the [`LICENSE` file][license-url] in the root of the main repository for details.
 
 ---
 
 ## Contact
 
 - **Author**: [dunamismax](https://dunamismax.com)
+- **Repository**: [dunamismax/Rust][rust-repo-url]
 - **Email**: [dunamismax@tutamail.com](mailto:dunamismax@tutamail.com)
-- **Website/Blog**: [dunamismax.com](https://dunamismax.com)
 
-For questions about **`rust-top`** or the [Rust repository](https://github.com/dunamismax/Rust), feel free to reach out or open an issue!
+Feel free to reach out or open an issue if you have questions about **`weather-cli`** or the [Rust repository][rust-repo-url]!
+
+---
+
+[rust-repo-url]: https://github.com/dunamismax/Rust
+[owm-signup-url]: https://openweathermap.org/appid
+[issues-url]: https://github.com/dunamismax/Rust/issues
+[pulls-url]: https://github.com/dunamismax/Rust/pulls
+[license-url]: https://github.com/dunamismax/Rust/blob/main/LICENSE

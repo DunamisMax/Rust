@@ -35,7 +35,7 @@ const LINE_ENDING: &str = "\n";
 ////////////////////////////////////////////////////////////////////////////////
 
 #[derive(Parser, Debug)]
-#[command(author, version, about = "Hello World TUI App", long_about = None)]
+#[command(author, version, about = "Greeter", long_about = None)]
 struct CliArgs {
     /// Example of a positional argument
     #[arg(value_name = "SOME_VALUE")]

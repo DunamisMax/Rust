@@ -1,13 +1,14 @@
-# File Commander
+# file-commander
 
-A Rust-based command-line application that organizes files by extension, date, or size, and also provides convenient commands to copy, move/rename, or delete files. This project is part of the [dunamismax/Rust](https://github.com/dunamismax/Rust) repository, located in the `Rust/Code/file-commander` subdirectory.
+A **Rust-based** TUI application for managing files and directories, demonstrating various file operations (copy, move, delete, etc.) via **Tokio**, **Clap**, **crossterm**, and **tui**. **`file-commander`** is part of the larger [Rust](https://github.com/dunamismax/Rust) repository maintained by [dunamismax](https://dunamismax.com).
 
 ---
 
 ## Table of Contents
 
-- [File Commander](#file-commander)
+- [file-commander](#file-commander)
   - [Table of Contents](#table-of-contents)
+  - [Overview](#overview)
   - [Features](#features)
   - [Prerequisites](#prerequisites)
   - [Installation](#installation)
@@ -15,158 +16,173 @@ A Rust-based command-line application that organizes files by extension, date, o
   - [Examples](#examples)
   - [Project Structure](#project-structure)
   - [Contributing](#contributing)
+  - [License](#license)
   - [Contact](#contact)
+
+---
+
+## Overview
+
+**`file-commander`** provides a “menu-driven” file management interface in the terminal. It leverages Rust’s async runtime (**Tokio**), the **Clap** CLI argument parser, **crossterm** for terminal interactions, and **tui** for building an interactive text-based user interface. You can perform operations such as:
+
+- Changing directories
+- Listing and displaying directory trees
+- Creating, copying, moving, and deleting files
+- Organizing files by extension, date, or size
+
+By default, the app launches in a TUI that displays a menu with all available operations. The goal is to demonstrate Rust’s concurrency alongside straightforward file-system tasks in a user-friendly manner.
 
 ---
 
 ## Features
 
-- **Organize files** by:
-  - **Extension** (e.g., `.png`, `.pdf`)
-  - **Date** (creation or last modified date)
-  - **Size** (small, medium, large)
-- **Copy** any file to a new location.
-- **Move/Rename** a file to a new path or name.
-- **Delete** a file or folder with confirmation.
-- **Dry run** option for organizing so you can see changes before applying them.
-- **Parallel processing** using **Rayon** for faster organizing.
-- **Colorful CLI banner** via the **colored** crate, displayed in a random color on each run.
+1. **TUI Menu Navigation**
+   Use arrow keys to scroll through a list of file operations, and press **Enter** to select them.
+
+2. **File & Directory Operations**
+   - Create files/directories.
+   - Copy, move/rename, or delete items (with basic prompts).
+   - Duplicate an item quickly (appends `"_copy"`).
+
+3. **Directory Tree View**
+   Recursively displays all files/directories in a “tree” format.
+
+4. **File Organizer**
+   Automatically sorts files based on **extension**, **date**, or **size** into subdirectories (with an optional “dry-run” mode).
+
+5. **Cross-Platform Compatibility**
+   Runs on most operating systems, though certain filesystem details (e.g., UNIX owner/group IDs) may only be shown on Linux/Unix.
+
+6. **Verbose Mode**
+   Toggle additional logging with `--verbose`.
 
 ---
 
 ## Prerequisites
 
+Before installing and running **`file-commander`**, ensure you have:
+
 1. **Rust & Cargo**
-   Make sure you have Rust (and Cargo) installed. You can get them from [rustup](https://www.rust-lang.org/tools/install).
-
-2. **Operating System**
-   Works on Windows, macOS, or Linux—any system that supports the Rust toolchain.
-
-No external API keys or environment variables are required.
+   - [Install Rust](https://www.rust-lang.org/tools/install) (1.60+ recommended).
+2. **Git** (optional)
+   - Required if you plan to clone the entire [dunamismax/Rust](https://github.com/dunamismax/Rust) repository.
 
 ---
 
 ## Installation
 
-1. **Clone the repository**:
+1. **Clone** the parent repository:
 
    ```bash
    git clone https://github.com/dunamismax/Rust.git
-   ```
-
-2. **Navigate to the `file-commander` directory**:
-
-   ```bash
    cd Rust/Code/file-commander
    ```
 
-3. **Build and run**:
+2. **Build** the application using Cargo:
 
    ```bash
-   cargo build
-   cargo run
+   cargo build --release
    ```
+
+3. **(Optional)** Update dependencies or feature flags in `Cargo.toml` if you want to tweak functionality (e.g., enable debug logs, etc.).
 
 ---
 
 ## Usage
 
-1. **Launch the CLI**:
+1. **Run** the application:
 
    ```bash
-   cargo run
+   cargo run --release
    ```
 
-   Upon starting, you’ll see the main menu with the following options:
+   Or execute the compiled binary:
 
    ```bash
-   1) Organize Files (by extension, date, size)
-   2) Copy a File
-   3) Move/Rename a File
-   4) Delete a File
-   5) Exit
+   ./target/release/file-commander
    ```
 
-2. **Organize Files**:
-   - Choose **1** in the main menu.
-   - Specify a directory to organize.
-   - Choose an organization method (Extension, Date, or Size).
-   - Optionally, enable “Dry Run” to simulate changes before actually moving files.
-   - Files will be reorganized into folders named by their extension, date, or size category.
+2. **CLI Arguments**:
+   - `--verbose` (or `-v`): Display extra debug info.
 
-3. **Copy a File**:
-   - Choose **2**.
-   - Enter the source file path.
-   - Enter the destination path (including the new filename).
+3. **Controls**:
+   - **Up/Down arrows**: Move cursor in the menu.
+   - **Enter**: Select a menu item to execute.
+   - **q** or **Ctrl+C**: Quit the application.
 
-4. **Move/Rename a File**:
-   - Choose **3**.
-   - Enter the current file path.
-   - Enter the new path/filename.
-
-5. **Delete a File**:
-   - Choose **4**.
-   - Enter the file path or directory path to delete.
-   - Confirm the action.
-
-6. **Exit**:
-   - Choose **5** to exit the application.
+4. **Flow**:
+   - After you run **`file-commander`**, you will see a menu with items like **1) Change directory**, **2) List contents**, **3) Show directory tree**, and so on.
+   - Selecting an item often prompts you to input a path or confirm your intentions (e.g., “Are you sure you want to delete...?”).
 
 ---
 
 ## Examples
 
-```bash
-# Start the CLI:
-cargo run
+Here are a few usage examples:
 
-# When prompted:
-#   Select an option: 1
-#   Enter the path of the directory to organize: ./my_documents
-#   Organization Methods: 1) By Extension, 2) By Date, 3) By Size
-#   Select a method: 1
-#   Dry Run? (y/n): n
-# Files in ./my_documents will be reorganized into subfolders by extension.
-```
+1. **Verbose Mode**:
 
-```bash
-# Copy a file:
-cargo run
-#   Select an option: 2
-#   Enter the source file path: ./my_documents/readme.txt
-#   Enter the destination path (including filename): ./backup/readme_backup.txt
-```
+   ```bash
+   cargo run --release -- --verbose
+   ```
+
+   This prints additional log messages in the terminal about ongoing operations.
+
+2. **Organize Files**:
+   - Select **“11) Organize files (by extension/date/size)”** from the TUI menu.
+   - Provide the path to the directory you want to organize.
+   - Choose the method of organization (extension, date, or size).
+   - Decide whether to perform a dry run or actually move the files.
+
+3. **Delete a Directory**:
+   - Navigate to the **“9) Delete file/directory”** option.
+   - Enter the directory path you want to remove.
+   - Confirm the delete operation when prompted.
 
 ---
 
 ## Project Structure
 
+Below is a snapshot of how **`file-commander`** fits into the [Rust](https://github.com/dunamismax/Rust) repository:
+
 ```bash
-Rust
-└── Code
-    ├── file-commander  <-- You are here
-    │   ├── Cargo.toml
-    │   └── src
-    │       └── main.rs
-    └── <other projects>
+Rust/
+├─ Code/
+│  ├─ file-commander/
+│  │  ├─ src/
+│  │  │  └─ main.rs
+│  │  ├─ Cargo.toml
+│  │  └─ README.md         <-- You are here!
+│  ├─ rust-top/
+│  ├─ hello-world-cli/
+│  ├─ ...
+│
+├─ Wiki/
+│  ├─ ...
+├─ LICENSE
+└─ README.md               <-- main repository README
 ```
+
+Each subdirectory under `Code/` contains its own Cargo project, letting you independently build or run each program.
 
 ---
 
 ## Contributing
 
-Contributions are welcome! Please open an [issue](https://github.com/dunamismax/Rust/issues) or submit a pull request for any bug fixes or new features.
+Contributions are welcome! If you find a bug or have a feature request, please open an [issue](https://github.com/dunamismax/Rust/issues) or submit a [pull request](https://github.com/dunamismax/Rust/pulls) in the main repository. Make sure to follow the repository’s coding style and guidelines.
 
-1. Fork the repository.
-2. Create a new branch: `git checkout -b feature/my-feature`.
-3. Commit your changes: `git commit -m "Add some feature"`.
-4. Push to your fork: `git push origin feature/my-feature`.
-5. Open a Pull Request.
+---
+
+## License
+
+This project is licensed under the [MIT License](https://github.com/dunamismax/Rust/blob/main/LICENSE). See the [`LICENSE` file](https://github.com/dunamismax/Rust/blob/main/LICENSE) in the root of the main repository for details.
 
 ---
 
 ## Contact
 
-Maintained by [dunamismax.com](https://github.com/dunamismax).
+- **Author**: [dunamismax](https://dunamismax.com)
+- **Email**: [dunamismax@tutamail.com](mailto:dunamismax@tutamail.com)
+- **Website/Blog**: [dunamismax.com](https://dunamismax.com)
 
-For any inquiries, please reach out via [email](mailto:dunamismax@tutamail.com).
+For questions about **`file-commander`** or any other projects in the [Rust repository](https://github.com/dunamismax/Rust), feel free to reach out or open an issue!

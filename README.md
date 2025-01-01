@@ -20,13 +20,13 @@ A **collection** of Rust-based projects maintained by [dunamismax](https://dunam
 
 ## Overview
 
-This repo serves as a **playground** and **showcase** for Rust. Each subproject has a dedicated folder with its own `README.md`, `Cargo.toml`, and source code. Topics include:
+This repo serves as a **playground** and **showcase** for Rust. Each subproject has a dedicated folder with its own `README.md`, `Cargo.toml`, and source code. Featured topics include:
 
-- **Basic CLI** tools (`hello-world-cli`).
-- **Networking** utilities (`net-commander`).
-- **Task management** apps (`reminders-cli`).
-- **System monitoring** (`rust-top`).
-- **Other** projects exploring new features or libraries.
+- **Task management** apps (`reminders-cli`)
+- **Weather data retrieval** (`weather-cli`)
+- **System monitoring** tools (`rust-top`)
+- **Encrypted note management** (`secure-notes`)
+- **File and directory command utilities** (`file-commander`)
 
 If you’re interested in learning Rust by example or want to see how to structure small-to-medium Rust projects, this repository offers a variety of patterns and solutions.
 
@@ -37,9 +37,9 @@ If you’re interested in learning Rust by example or want to see how to structu
 Below is a simplified view of the core layout:
 
 ```bash
-
 Rust/
 ├─ Code/
+│  ├─ file-commander/
 │  ├─ hello-world-cli/
 │  ├─ net-commander/
 │  ├─ reminders-cli/
@@ -51,7 +51,6 @@ Rust/
 │  ├─ ...
 ├─ LICENSE
 └─ README.md  <-- You're here (main repository README)
-
 ```
 
 Each subdirectory under [`Code/`](Code) is an individual Rust application with its own build script (`Cargo.toml`) and a dedicated `README.md` providing more details.
@@ -60,24 +59,24 @@ Each subdirectory under [`Code/`](Code) is an individual Rust application with i
 
 ## Subprojects
 
-Here are some notable subprojects (not an exhaustive list):
+Here are some **notable** subprojects (not an exhaustive list):
 
-1. **[rust-top](Code/rust-top)**
-   - A “top-like” TUI tool for monitoring processes, CPU usage, and memory.
+1. **[reminders-cli](Code/reminders-cli/)**
+   A **command-line to-do tool** for scheduling quick reminders and tasks. Features include creating, listing, and removing reminders, plus simple search capabilities.
 
-2. **[hello-world-cli](Code/hello-world-cli)**
-   - A minimal command-line greeting utility demonstrating argument parsing and TUI basics.
+2. **[weather-cli](Code/weather-cli/)**
+   Retrieves weather data from a public API and displays it via a **text-based user interface**. Supports multiple units of measurement and location inputs (city or ZIP).
 
-3. **[net-commander](Code/net-commander)**
-   - A simple network utility for checking connectivity, performing pings, or retrieving HTTP endpoints.
+3. **[rust-top](Code/rust-top/)**
+   A “top-like” **TUI application** for monitoring processes, CPU usage, memory consumption, and more—providing insights into your system’s live performance.
 
-4. **[reminders-cli](Code/reminders-cli)**
-   - A CLI tool for managing short-term tasks and reminders on the local machine.
+4. **[secure-notes](Code/secure-notes/)**
+   Offers a **secure CLI-based vault** for storing encrypted notes or credentials. Utilizes Rust’s strong cryptographic libraries to ensure data privacy.
 
-5. **[weather-cli](Code/weather-cli)**
-   - Retrieves weather data from a public API and displays it via TUI with configurable refresh intervals.
+5. **[file-commander](Code/file-commander/)**
+   A **file-management CLI** capable of performing operations like copying, moving, deleting, and renaming files and folders. Includes support for batch operations.
 
-Check each folder for specific build/run instructions, usage examples, and additional features.
+Other subprojects, such as **[hello-world-cli](Code/hello-world-cli/)** and **[net-commander](Code/net-commander/)**, demonstrate smaller-scale examples of Rust-based CLI utilities. Check each folder for specific build/run instructions, usage examples, and additional features.
 
 ---
 
@@ -93,29 +92,30 @@ Check each folder for specific build/run instructions, usage examples, and addit
 2. **Explore** the applications in the `Code/` directory:
 
    ```bash
-   cd Code/rust-top   # or any other subproject
+   cd Code/reminders-cli   # or any other subproject
    cargo run --release
    ```
 
-3. **Customize** or **build** each subproject independently. They do not share dependencies beyond Rust itself.
+3. **Customize or build** each subproject independently. They do not share dependencies beyond Rust itself, so you can work on any application in isolation.
 
 ---
 
 ## Contributing
 
-Pull requests and issues are welcome! If you’d like to contribute:
+Contributions are welcome! If you have ideas or improvements, please:
 
 1. Fork the repository.
 2. Create a new branch with your changes (`git checkout -b feature-xyz`).
-3. Submit a Pull Request with a clear description of your changes.
+3. Commit and push your changes.
+4. Open a Pull Request with a clear description of your modifications or additions.
 
-Please open issues if you encounter bugs or have feature ideas. Follow the coding style, provide adequate testing, and keep commits atomic.
+Feel free to open an [issue](https://github.com/dunamismax/Rust/issues) if you encounter bugs or have feature suggestions. Please follow the existing code style, provide sufficient testing, and keep commits atomic.
 
 ---
 
 ## License
 
-All projects in this repository are licensed under the [MIT License](LICENSE). Feel free to use, modify, and distribute the code in accordance with this license.
+All projects in this repository are licensed under the [MIT License](LICENSE). You can use, modify, and distribute the code under the terms of this license.
 
 ---
 
@@ -125,4 +125,4 @@ All projects in this repository are licensed under the [MIT License](LICENSE). F
 - **Email**: [dunamismax@tutamail.com](mailto:dunamismax@tutamail.com)
 - **Website / Blog**: [dunamismax.com](https://dunamismax.com)
 
-For any questions or suggestions, feel free to reach out or open an [issue](https://github.com/dunamismax/Rust/issues). Enjoy exploring Rust!
+For questions or suggestions, please reach out or open an [issue](https://github.com/dunamismax/Rust/issues). Happy coding and exploring Rust!

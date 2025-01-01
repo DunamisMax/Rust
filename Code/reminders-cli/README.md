@@ -1,7 +1,6 @@
 # reminders-cli
 
-A command-line reminders application written in Rust, with persistent storage in the user's home directory. You can add, list, complete, and remove reminders—all within an interactive menu system.
-This project is part of the [dunamismax/Rust](https://github.com/dunamismax/Rust) repository, located in the `Rust/Code/reminders-cli` subdirectory.
+A **Rust-based** CLI/TUI application that helps you manage tasks and reminders with optional due dates. **`reminders-cli`** is part of the larger [Rust](https://github.com/dunamismax/Rust) repository maintained by [dunamismax](https://dunamismax.com).
 
 ---
 
@@ -9,6 +8,7 @@ This project is part of the [dunamismax/Rust](https://github.com/dunamismax/Rust
 
 - [reminders-cli](#reminders-cli)
   - [Table of Contents](#table-of-contents)
+  - [Overview](#overview)
   - [Features](#features)
   - [Prerequisites](#prerequisites)
   - [Installation](#installation)
@@ -16,148 +16,171 @@ This project is part of the [dunamismax/Rust](https://github.com/dunamismax/Rust
   - [Examples](#examples)
   - [Project Structure](#project-structure)
   - [Contributing](#contributing)
+  - [License](#license)
   - [Contact](#contact)
+
+---
+
+## Overview
+
+**`reminders-cli`** is a TUI (terminal user interface) application that allows you to track tasks (“reminders”) from your terminal. You can add tasks, specify optional due dates, mark tasks as done, remove tasks, and clear all completed tasks — all in an interactive interface. The application leverages:
+
+- **crossterm** for terminal interaction
+- **tui** for rendering text-based user interfaces
+- **serde** / **serde_json** for data persistence
+- **chrono** for date/time parsing and formatting
 
 ---
 
 ## Features
 
-- **Interactive menu** for listing, adding, completing, and removing reminders.
-- **Persistent storage** in `~/.reminders.json` (within the user's home directory).
-- **Optional due dates** using various date/time formats.
-- **Colored output** for a more engaging terminal experience.
-- **Automatic ID generation** for new reminders.
-- **Clear all completed reminders** in one quick step.
+1. **Add & Manage Reminders**
+   Create new reminders with a title and optional due date, list them on-screen, and track their status.
+
+2. **Mark as Completed**
+   Easily mark reminders as completed to keep track of finished tasks.
+
+3. **Remove & Clear**
+   Remove a single reminder or clear all completed reminders in one go.
+
+4. **Interactive TUI**
+   Use arrow keys or **j** / **k** to navigate the reminder list, **a** to add tasks, **d** to mark done, **r** to remove, **c** to clear, and **q** to quit.
+
+5. **Cross-Platform Friendly**
+   Uses terminal-based libraries that work on Linux, macOS, and Windows (although some filesystem or display variations may apply).
 
 ---
 
 ## Prerequisites
 
-1. **Rust & Cargo**
-   Ensure you have Rust (and Cargo) installed. You can install Rust using [rustup](https://www.rust-lang.org/tools/install).
+Before installing and running **`reminders-cli`**, ensure you have:
 
-No external API keys or services are required.
+1. **Rust & Cargo** (latest stable version recommended)
+   Installation instructions are available at [rustup.rs](https://rustup.rs).
+
+2. (Optional) **Git** if you plan on cloning the entire repository.
 
 ---
 
 ## Installation
 
-1. **Clone the repository**:
+1. **Clone** the parent repository:
 
    ```bash
    git clone https://github.com/dunamismax/Rust.git
-   ```
-
-2. **Navigate to the `reminders-cli` directory**:
-
-   ```bash
    cd Rust/Code/reminders-cli
    ```
 
-3. **Build and run**:
+2. **Build** the application using [Cargo](https://doc.rust-lang.org/cargo/):
 
    ```bash
-   cargo build
-   cargo run
+   cargo build --release
    ```
+
+3. **(Optional)** Adjust dependencies or features by modifying the `[dependencies]` section in the `Cargo.toml` file.
 
 ---
 
 ## Usage
 
-Upon running `cargo run`, you will see a welcome banner followed by a menu with several options:
+1. **Run** the application in release mode:
 
-1. **List all reminders**
-   Displays all reminders, including their ID, title, due date (if any), and completion status.
+   ```bash
+   cargo run --release
+   ```
 
-2. **Add a new reminder**
-   Prompts you for a reminder title and an optional due date/time.
+   or run the compiled binary directly:
 
-3. **Mark a reminder as completed**
-   Asks for the reminder's ID, then marks it as completed.
+   ```bash
+   ./target/release/reminders-cli
+   ```
 
-4. **Remove a reminder**
-   Deletes the reminder identified by the provided ID.
+2. **Controls**:
+   - **q**: Quit the application.
+   - **j** / **Down Arrow**: Move the selection cursor down.
+   - **k** / **Up Arrow**: Move the selection cursor up.
+   - **a**: Add a new reminder (prompts for title and optional due date).
+   - **d**: Mark the selected reminder as done.
+   - **r**: Remove the currently selected reminder.
+   - **c**: Clear all completed reminders.
+   - **Esc**: Cancel adding a new reminder (while in input mode).
 
-5. **Clear all completed reminders**
-   Deletes all reminders currently marked as completed.
-
-6. **Quit**
-   Exits the application.
-
-All reminders are stored in a JSON file located at:
-
-```bash
-~/.reminders.json
-```
-
-(This file is automatically created if it does not exist.)
+3. **Due Date Format**:
+   The app attempts to parse dates in `YYYY-mm-dd HH:MM` format. If parsing fails, your new reminder is stored without a due date.
 
 ---
 
 ## Examples
 
-```bash
-# Standard run (with interactive menu)
-cargo run
-```
+1. **Start in Normal Mode**:
 
-**Sample Interaction**:
+   ```bash
+   cargo run --release
+   ```
 
-```bash
-                        _             _                          _  _
-                       (_)           | |                        | |(_)
- _ __   ___  _ __ ___   _  _ __    __| |  ___  _ __  ___    ___ | | _
-| '__| / _ \| '_ ` _ \ | || '_ \  / _` | / _ \| '__|/ __|  / __|| || |
-| |   |  __/| | | | | || || | | || (_| ||  __/| |   \__ \ | (__ | || |
-|_|    \___||_| |_| |_||_||_| |_| \__,_| \___||_|   |___/  \___||_||_|
+   Follow on-screen prompts to add and manage reminders.
 
-===== MAIN MENU =====
-1) List all reminders
-2) Add a new reminder
-3) Mark a reminder as completed
-4) Remove a reminder
-5) Clear all completed reminders
-6) Quit
-=====================
-Enter a choice (1-6):
-```
+2. **Verbose Output**:
 
-After you choose an option, follow the on-screen prompts to complete the desired action.
+   ```bash
+   cargo run --release -- --verbose
+   ```
+
+   This prints some additional logs when starting up.
+
+3. **Adding a Reminder**:
+   - Press **a**.
+   - Enter a title (e.g., "Buy groceries"), press Enter.
+   - Enter a due date (optional, e.g., "2024-01-01 08:00"), then press Enter to confirm or skip.
+
+4. **Marking as Done**:
+   - Navigate to the reminder using **j** / **k**.
+   - Press **d** to mark the selected reminder as completed.
 
 ---
 
 ## Project Structure
 
+The **`reminders-cli`** folder is one of several standalone Rust applications located within [Code/](https://github.com/dunamismax/Rust/tree/main/Code) in the main [Rust repository](https://github.com/dunamismax/Rust). The overall layout is:
+
 ```bash
-Rust
-└── Code
-    ├── user-greeter
-    ├── weather-cli
-    ├── file-commander
-    ├── <other projects>
-    └── reminders-cli  <-- You are here
-        ├── Cargo.toml
-        ├── src
-        │   └── main.rs
-        └── README.md (this file)
+Rust/
+├─ Code/
+│  ├─ hello-world-cli/
+│  ├─ net-commander/
+│  ├─ reminders-cli/
+│  │  ├─ src/
+│  │  ├─ Cargo.toml
+│  │  └─ README.md  <-- You are here!
+│  ├─ ...
+│  └─ rust-top/
+├─ Wiki/
+│  ├─ ...
+├─ LICENSE
+└─ README.md         <-- main repository README
 ```
+
+Each subfolder under **Code/** is a standalone Cargo project with its own `Cargo.toml` and `README.md`.
 
 ---
 
 ## Contributing
 
-Contributions are welcome! Please open an [issue](https://github.com/dunamismax/Rust/issues) or submit a pull request for any bug fixes or new features.
+Contributions are welcome! If you encounter a bug or have a feature request, please open an [issue](https://github.com/dunamismax/Rust/issues) or submit a [pull request](https://github.com/dunamismax/Rust/pulls) in the main repository. Please follow the project’s coding style and guidelines.
 
-1. Fork the repository
-2. Create a new branch: `git checkout -b feature/my-feature`
-3. Commit your changes: `git commit -m "Add some feature"`
-4. Push to your fork: `git push origin feature/my-feature`
-5. Open a Pull Request
+---
+
+## License
+
+This project is licensed under the [MIT License](https://github.com/dunamismax/Rust/blob/main/LICENSE).
+See the [`LICENSE` file](https://github.com/dunamismax/Rust/blob/main/LICENSE) in the root of the main repository for details.
 
 ---
 
 ## Contact
 
-Maintained by [dunamismax.com](https://github.com/dunamismax).
-For any inquiries, please reach out via [email](mailto:dunamismax@tutamail.com).
+- **Author**: [dunamismax](https://dunamismax.com)
+- **Email**: [dunamismax@tutamail.com](mailto:dunamismax@tutamail.com)
+- **Website/Blog**: [dunamismax.com](https://dunamismax.com)
+
+For questions about **`reminders-cli`** or the [Rust repository](https://github.com/dunamismax/Rust), feel free to reach out or open an issue!

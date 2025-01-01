@@ -1,120 +1,132 @@
-# Hello World CLI
+# hello-world-cli
 
-A simple command-line application written in Rust that greets users in random languages and colors.
-This project is part of the [dunamismax/Rust](https://github.com/dunamismax/Rust) repository, located in the `Rust/Code/hello-world-cli` subdirectory.
+A **TUI-based** greeting application that displays random multilingual greetings. **`hello-world-cli`** is part of the larger [Rust](https://github.com/dunamismax/Rust) repository maintained by [dunamismax](https://dunamismax.com).
 
 ---
 
 ## Table of Contents
 
-- [Hello World CLI](#hello-world-cli)
+- [hello-world-cli](#hello-world-cli)
   - [Table of Contents](#table-of-contents)
+  - [Overview](#overview)
   - [Features](#features)
-  - [Prerequisites](#prerequisites)
   - [Installation](#installation)
   - [Usage](#usage)
-  - [Examples](#examples)
-  - [Project Structure](#project-structure)
+  - [Repository Structure](#repository-structure)
   - [Contributing](#contributing)
+  - [License](#license)
   - [Contact](#contact)
+
+---
+
+## Overview
+
+**`hello-world-cli`** is a Rust-based Text User Interface (TUI) application that greets you in random languages from around the world. Simply type a name, press **Enter**, and you’ll see a multilingual greeting displayed in an eye-catching color! It uses [`tui`][tui-crate] + [`crossterm`][crossterm-crate] for rendering the interface, and runs on an asynchronous runtime powered by [`tokio`][tokio-crate].
 
 ---
 
 ## Features
 
-- **Random-color ASCII banner** on startup.
-- **Multi-lingual greetings** (randomly chosen from a diverse set).
-- **Interactive prompt** for user name input (defaults to “World” if left empty).
-- **Console clearing** for a neat, fresh look on each run.
+1. **Multilingual Greetings**
+   Selects from a large list of greetings in various languages (e.g., Spanish, Chinese, Korean, etc.).
 
----
+2. **Randomized Colors**
+   Each greeting is displayed in a random color to add variety and fun.
 
-## Prerequisites
+3. **Keyboard-Driven**
+   Uses non-blocking keyboard input to capture typed names and handle application exit (`Esc`, `Ctrl-C`).
 
-1. **Rust & Cargo**
-   Ensure you have Rust (and Cargo) installed. You can install Rust using [rustup](https://www.rust-lang.org/tools/install).
+4. **Optional Verbose Mode**
+   Pass `--verbose` to enable additional logging output on startup.
 
 ---
 
 ## Installation
 
-1. **Clone the repository**:
+1. **Clone** the parent repository:
 
    ```bash
    git clone https://github.com/dunamismax/Rust.git
-   ```
-
-2. **Navigate to the `hello-world-cli` directory**:
-
-   ```bash
    cd Rust/Code/hello-world-cli
    ```
 
-3. **Build and run**:
+2. **Build** using Cargo (Rust’s package manager):
 
    ```bash
-   cargo build
-   cargo run
+   cargo build --release
    ```
+
+3. **(Optional)** Adjust dependencies or feature flags in `Cargo.toml` if you want to customize the application.
 
 ---
 
 ## Usage
 
-When you run the application, it will:
+1. **Run** the application:
 
-1. Clear your terminal screen.
-2. Display a **random-colored** ASCII banner.
-3. Prompt you for your name. Enter your name (or press Enter to skip).
-4. Greet you in a randomly selected language and color!
+   ```bash
+   cargo run --release
+   ```
+
+   or
+
+   ```bash
+   ./target/release/hello-world-cli
+   ```
+
+2. **Controls**:
+   - **Type** any name, then **press Enter** to generate a random greeting.
+   - **Esc** or **Ctrl-C** to **quit** the application.
+
+3. **Flag**:
+   - `--verbose`: Prints extra log information on startup.
+
+4. **Example**:
+
+   ```bash
+   cargo run -- --verbose
+   ```
+
+   Type a name and press **Enter** to see greetings like “Spanish: Hola — Carlos!” displayed in random colors.
 
 ---
 
-## Examples
+## Repository Structure
+
+The **`hello-world-cli`** folder is one of several standalone Rust applications located within [Code/](https://github.com/dunamismax/Rust/tree/main/Code) in the main [Rust repository](https://github.com/dunamismax/Rust). Each subfolder contains its own Cargo project and its own `README.md`. The overall layout is:
 
 ```bash
-# Basic run (interactive prompt)
-cargo run
-
-# If you simply press Enter at the prompt,
-# it will greet "World" in a random language.
-
-# If you enter "Alice" at the prompt,
-# it might say "Spanish: Hola — Alice!" in a random color, for example.
-```
-
----
-
-## Project Structure
-
-```bash
-Rust
-└── Code
-    ├── weather-cli
-    ├── file-commander
-    ├── <other projects>
-    └── hello-world-cli  <-- You are here
-        ├── Cargo.toml
-        ├── src
-        │   └── main.rs
-        └── README.md (this file)
+Rust/
+├─ Code/
+│  ├─ hello-world-cli/
+│  ├─ net-commander/
+│  ├─ reminders-cli/
+│  ├─ ...
+│  └─ rust-top/
+├─ Wiki/
+│  ├─ ...
+├─ LICENSE
+└─ README.md         <-- main repository README
 ```
 
 ---
 
 ## Contributing
 
-Contributions are welcome! Please open an [issue](https://github.com/dunamismax/Rust/issues) or submit a pull request for any bug fixes or new features.
+Contributions are welcome! If you encounter a bug or want to request a feature, please open an [issue](https://github.com/dunamismax/Rust/issues) or a [pull request](https://github.com/dunamismax/Rust/pulls) in the main repository. Please follow the project’s coding style and guidelines.
 
-1. Fork the repository
-2. Create a new branch: `git checkout -b feature/my-feature`
-3. Commit your changes: `git commit -m "Add some feature"`
-4. Push to your fork: `git push origin feature/my-feature`
-5. Open a Pull Request
+---
+
+## License
+
+This project is licensed under the [MIT License](https://github.com/dunamismax/Rust/blob/main/LICENSE). For details, see the [`LICENSE` file](https://github.com/dunamismax/Rust/blob/main/LICENSE) in the root of the main repository.
 
 ---
 
 ## Contact
 
-Maintained by [dunamismax.com](https://github.com/dunamismax).
-For any inquiries, please reach out via [email](mailto:dunamismax@tutamail.com).
+- **Author**: [dunamismax](https://dunamismax.com)
+- **Email**: [dunamismax@tutamail.com](mailto:dunamismax@tutamail.com)
+- **Website/Blog**: [dunamismax.com](https://dunamismax.com)
+
+For questions about **`hello-world-cli`** or the [Rust repository](https://github.com/dunamismax/Rust), feel free to reach out or open an issue!
