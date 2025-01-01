@@ -11,4 +11,4 @@ anyhow = "*"
 crossterm = "*"
 clap = { version = "*", features = ["derive"] }
 tokio = { version = "*", features = ["rt-multi-thread", "macros"] }
-tui = "*"
+ratatui = "*"
