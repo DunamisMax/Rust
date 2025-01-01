@@ -13,17 +13,16 @@ use std::{
     io::{self, Write},
 };
 
-// Crossterm + ratatui
 use crossterm::{
-    event::EnableMouseCapture,
+    cursor::MoveTo,
     execute,
-    terminal::{disable_raw_mode, enable_raw_mode},
+    terminal::{disable_raw_mode, enable_raw_mode, Clear, ClearType},
 };
-use ratatui::{
+use tui::{
     backend::CrosstermBackend,
-    layout::{Constraint, Direction, Layout},
+    layout::{Alignment, Constraint, Direction, Layout},
     style::{Color, Modifier, Style},
-    text::{Line, Span},
+    text::{Span, Spans},
     widgets::{Block, Borders, Paragraph},
     Terminal,
 };
@@ -42,7 +41,6 @@ const LINE_ENDING: &str = "\n";
 // CLI Arguments
 ////////////////////////////////////////////////////////////////////////////////
 
-/// A simple async weather CLI using the OpenWeatherMap API
 #[derive(Debug, Parser)]
 #[command(author, version, about, long_about = None)]
 struct Cli {
@@ -115,122 +113,192 @@ struct SysData {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    // Enable raw mode for our TUI
-    enable_raw_mode()?;
-    let mut stdout = io::stdout();
-    execute!(stdout, EnableMouseCapture)?;
-    let backend = CrosstermBackend::new(stdout);
-    let mut terminal = Terminal::new(backend)?;
-
-    // Clear the screen & display a banner
-    clear_screen(&mut terminal)?;
-    print_welcome_banner(&mut terminal)?;
-
-    // Load .env if present
     dotenv().ok();
-
-    // Parse CLI arguments
     let cli = Cli::parse();
 
-    // Retrieve API key from environment or fail gracefully
     let api_key = env::var("OWM_API_KEY")
         .context("Environment variable OWM_API_KEY not set. Please set it or store it in .env.")?;
 
-    // Prompt user if location is not provided
+    //
+    // 1) Show the TUI welcome layout (raw mode ON)
+    //
+    enable_raw_mode()?;
+    let mut terminal = setup_terminal()?;
+    clear_screen(&mut terminal)?;
+    draw_welcome_screen(&mut terminal)?;
+    disable_raw_mode()?; // Turn off raw mode so we can read from stdin normally.
+
+    //
+    // 2) Prompt for location on the console
+    //
     let location = match cli.location {
         Some(loc) => loc,
-        None => prompt_for_location()?,
+        None => {
+            // Now user sees the TUI with the ">" prompt line. We read console input below it.
+            let mut input = String::new();
+            io::stdin().read_line(&mut input)?;
+            let trimmed = input.trim().to_string();
+            if trimmed.is_empty() {
+                "London".to_string()
+            } else {
+                trimmed
+            }
+        }
     };
 
-    // Decide fetch strategy (ZIP or city name)
+    //
+    // 3) Fetch weather data
+    //
     let weather = if is_numeric(&location) {
         fetch_weather_zip(&location, &cli.country, &api_key, &cli.units).await?
     } else {
         fetch_weather_city(&location, &cli.country, &api_key, &cli.units).await?
     };
 
-    // Display the results
-    print_weather(&mut terminal, &weather)?;
+    //
+    // 4) Show the weather info in TUI again
+    //
+    enable_raw_mode()?;
+    let mut terminal = setup_terminal()?;
+    clear_screen(&mut terminal)?;
+    draw_weather_info(&mut terminal, &weather)?;
 
-    // Pause so user can see the output
-    print!("Press Enter to exit...{}", LINE_ENDING);
+    // Pause so user can see output
+    disable_raw_mode()?;
+    print!("   Press Enter to exit...{}", LINE_ENDING);
     io::stdout().flush()?;
     let mut exit_buf = String::new();
     io::stdin().read_line(&mut exit_buf)?;
 
-    // Restore the terminal to normal mode
-    disable_raw_mode()?;
+    // Cleanup: clear screen, print goodbye
+    execute!(terminal.backend_mut(), Clear(ClearType::All), MoveTo(0, 0))?;
+    print!("Goodbye!{}", LINE_ENDING);
+
     Ok(())
 }
 
 ////////////////////////////////////////////////////////////////////////////////
-// Terminal UI Helpers
+// Utility: Setup Terminal
 ////////////////////////////////////////////////////////////////////////////////
 
-/// Clears the terminal screen using ratatui's Terminal API.
+fn setup_terminal() -> Result<Terminal<CrosstermBackend<std::io::Stdout>>> {
+    let backend = CrosstermBackend::new(io::stdout());
+    let terminal = Terminal::new(backend)?;
+    Ok(terminal)
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// Utility: Clears the screen
+////////////////////////////////////////////////////////////////////////////////
+
 fn clear_screen(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>) -> Result<()> {
     terminal.clear()?;
     Ok(())
 }
 
-/// Prints a multi-line ASCII banner at the top using ratatui widgets.
-fn print_welcome_banner(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>) -> Result<()> {
-    terminal.draw(|f| {
-        let size = f.area();
+////////////////////////////////////////////////////////////////////////////////
+// Utility: Show ASCII banner + multiple lines
+////////////////////////////////////////////////////////////////////////////////
+
+fn draw_welcome_screen(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>) -> Result<()> {
+    let banner_text = r#"
+                         _____ ______                               ___________
+___      _______ ______ ___  /____  /_ _____ ________        __________  /___(_)
+__ | /| / /_  _ \_  __ `/_  __/__  __ \_  _ \__  ___/_________  ___/__  / __  /
+__ |/ |/ / /  __// /_/ / / /_  _  / / //  __/_  /    _/_____// /__  _  /  _  /
+____/|__/  \___/ \__,_/  \__/  /_/ /_/ \___/ /_/             \___/  /_/   /_/
+"#;
+
+    // We'll define multiple vertical chunks:
+    //   - chunk[0]: the 8-line banner
+    //   - chunk[1]: blank line
+    //   - chunk[2]: "Welcome to the Weather CLI!"
+    //   - chunk[3]: blank line
+    //   - chunk[4]: "Please enter a ZIP code..."
+    //   - chunk[5]: blank line
+    //   - chunk[6]: ">"
+    //
+    // So the user sees each line separated by blank lines.
+    terminal.draw(|frame| {
+        let size = frame.size();
 
         let layout = Layout::default()
             .direction(Direction::Vertical)
-            .constraints([Constraint::Percentage(100)].as_ref())
+            .margin(1)
+            .constraints([
+                Constraint::Length(8), // banner
+                Constraint::Length(1), // blank
+                Constraint::Length(1), // welcome line
+                Constraint::Length(1), // blank
+                Constraint::Length(1), // prompt line
+                Constraint::Length(1), // blank
+                Constraint::Length(1), // ">"
+            ])
             .split(size);
 
-        let banner_text = r#"
-                        _    _                         _  _
-                       | |  | |                       | |(_)
-__      __  ___   __ _ | |_ | |__    ___  _ __    ___ | | _
-\ \ /\ / / / _ \ / _` || __|| '_ \  / _ \| '__|  / __|| || |
- \ V  V / |  __/| (_| || |_ | | | ||  __/| |    | (__ | || |
-  \_/\_/   \___| \__,_| \__||_| |_| \___||_|     \___||_||_|
-"#;
+        // chunk[0]: ASCII banner
+        let banner_lines = banner_text
+            .lines()
+            .map(|line| {
+                Spans::from(Span::styled(
+                    line,
+                    Style::default()
+                        .fg(Color::Cyan)
+                        .add_modifier(Modifier::BOLD),
+                ))
+            })
+            .collect::<Vec<_>>();
+        let banner_paragraph = Paragraph::new(banner_lines)
+            .alignment(Alignment::Left)
+            .block(Block::default());
+        frame.render_widget(banner_paragraph, layout[0]);
 
-        let banner = Paragraph::new(banner_text).style(
-            Style::default()
-                .fg(Color::Cyan)
-                .add_modifier(Modifier::BOLD),
-        );
-        f.render_widget(banner, layout[0]);
+        // chunk[1]: blank line => just render an empty paragraph
+        let blank_paragraph = Paragraph::new("").block(Block::default());
+        frame.render_widget(blank_paragraph, layout[1]);
+
+        // chunk[2]: "Welcome to the Weather CLI!"
+        let welcome_paragraph = Paragraph::new("Welcome to the Weather CLI!")
+            .alignment(Alignment::Left)
+            .block(Block::default());
+        frame.render_widget(welcome_paragraph, layout[2]);
+
+        // chunk[3]: blank line
+        let blank_paragraph = Paragraph::new("").block(Block::default());
+        frame.render_widget(blank_paragraph, layout[3]);
+
+        // chunk[4]: "Please enter a ZIP code or city name:"
+        let prompt_line = Paragraph::new("Please enter a ZIP code or city name:")
+            .alignment(Alignment::Left)
+            .block(Block::default());
+        frame.render_widget(prompt_line, layout[4]);
+
+        // chunk[5]: blank line
+        let blank_paragraph = Paragraph::new("").block(Block::default());
+        frame.render_widget(blank_paragraph, layout[5]);
+
+        // chunk[6]: final line with ">"
+        let arrow_paragraph = Paragraph::new(">")
+            .alignment(Alignment::Left)
+            .block(Block::default());
+        frame.render_widget(arrow_paragraph, layout[6]);
     })?;
 
-    print!("Welcome to the Weather CLI!{}", LINE_ENDING);
-    print!("{}", LINE_ENDING);
     Ok(())
 }
 
 ////////////////////////////////////////////////////////////////////////////////
-// Prompt for Location
+// Utility: Check if input is numeric (ZIP) or not (city)
 ////////////////////////////////////////////////////////////////////////////////
 
-/// If no city/ZIP was provided, interactively prompt user.
-fn prompt_for_location() -> Result<String> {
-    print!("Please enter a ZIP code or city name: {}", LINE_ENDING);
-    io::stdout().flush()?;
-
-    let mut input = String::new();
-    io::stdin().read_line(&mut input)?;
-    let trimmed = input.trim().to_string();
-
-    // Provide a default if the user pressed Enter without typing anything
-    if trimmed.is_empty() {
-        Ok("London".to_string())
-    } else {
-        Ok(trimmed)
-    }
+fn is_numeric(s: &str) -> bool {
+    s.chars().all(|c| c.is_ascii_digit())
 }
 
 ////////////////////////////////////////////////////////////////////////////////
-// Fetching Weather Data
+// Utility: Fetch weather by city
 ////////////////////////////////////////////////////////////////////////////////
 
-/// Fetches weather data by city name asynchronously.
 async fn fetch_weather_city(
     city: &str,
     country: &str,
@@ -258,7 +326,10 @@ async fn fetch_weather_city(
     Ok(resp)
 }
 
-/// Fetches weather data by ZIP code asynchronously.
+////////////////////////////////////////////////////////////////////////////////
+// Utility: Fetch weather by ZIP
+////////////////////////////////////////////////////////////////////////////////
+
 async fn fetch_weather_zip(
     zip: &str,
     country: &str,
@@ -287,155 +358,148 @@ async fn fetch_weather_zip(
 }
 
 ////////////////////////////////////////////////////////////////////////////////
-// Display Logic
+// Utility: Draw TUI-based weather info
 ////////////////////////////////////////////////////////////////////////////////
 
-/// Renders the fetched weather info using ratatui’s widget system.
-fn print_weather(
+fn draw_weather_info(
     terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>,
     weather: &WeatherResponse,
 ) -> Result<()> {
-    // Construct a heading for the city/country
-    let heading = format!(
-        "Current weather in {}{}",
-        weather.name,
-        weather
-            .sys
-            .as_ref()
-            .and_then(|sys| sys.country.as_ref())
-            .map(|cc| format!(", {cc}"))
-            .unwrap_or_default(),
-    );
+    terminal.draw(|frame| {
+        let size = frame.size();
 
-    // Start building lines for our Paragraph
-    let mut lines = Vec::new();
+        let layout = Layout::default()
+            .direction(Direction::Vertical)
+            .margin(1)
+            .constraints([Constraint::Percentage(100)])
+            .split(size);
 
-    // Heading line: cyan + bold
-    lines.push(Line::from(Span::styled(
-        heading,
-        Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
-    )));
+        // Build up lines of text
+        let heading = format!(
+            "Current weather in {}{}",
+            weather.name,
+            weather
+                .sys
+                .as_ref()
+                .and_then(|sys| sys.country.as_ref())
+                .map(|cc| format!(", {cc}"))
+                .unwrap_or_default(),
+        );
 
-    // Condition
-    if let Some(description) = weather.weather.get(0) {
-        let cond_str = format!("Condition: {} ({})", description.main, description.description);
-        lines.push(Line::from(Span::styled(
-            cond_str,
+        let mut lines = Vec::new();
+        lines.push(Spans::from(Span::styled(
+            heading,
             Style::default()
-                .fg(Color::Yellow)
+                .fg(Color::Cyan)
                 .add_modifier(Modifier::BOLD),
         )));
-    }
 
-    // Temperature
-    let temp_str = format!("Temperature: {:.1}°F", weather.main.temp);
-    lines.push(Line::from(Span::styled(temp_str, Style::default().fg(Color::Blue))));
+        if let Some(desc) = weather.weather.get(0) {
+            let cond_str = format!("Condition: {} ({})", desc.main, desc.description);
+            lines.push(Spans::from(Span::styled(
+                cond_str,
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            )));
+        }
 
-    // Feels like
-    if let Some(fl) = weather.main.feels_like {
-        let feels_str = format!("Feels like: {:.1}°F", fl);
-        lines.push(Line::from(Span::styled(
-            feels_str,
+        let temp_str = format!("Temperature: {:.1}°F", weather.main.temp);
+        lines.push(Spans::from(Span::styled(
+            temp_str,
             Style::default().fg(Color::Blue),
         )));
-    }
 
-    // Min / Max
-    if let Some(min_temp) = weather.main.temp_min {
-        lines.push(Line::from(Span::styled(
-            format!("Min temp: {:.1}°F", min_temp),
-            Style::default().fg(Color::Blue),
-        )));
-    }
-    if let Some(max_temp) = weather.main.temp_max {
-        lines.push(Line::from(Span::styled(
-            format!("Max temp: {:.1}°F", max_temp),
-            Style::default().fg(Color::Blue),
-        )));
-    }
-
-    // Pressure
-    if let Some(pressure) = weather.main.pressure {
-        lines.push(Line::from(Span::styled(
-            format!("Pressure: {} hPa", pressure),
-            Style::default().fg(Color::Blue),
-        )));
-    }
-
-    // Humidity
-    lines.push(Line::from(Span::styled(
-        format!("Humidity: {}%", weather.main.humidity),
-        Style::default().fg(Color::Blue),
-    )));
-
-    // Wind info
-    if let Some(wind) = &weather.wind {
-        lines.push(Line::from(Span::styled(
-            format!("Wind speed: {:.1} mph", wind.speed),
-            Style::default().fg(Color::Blue),
-        )));
-        if let Some(gust) = wind.gust {
-            lines.push(Line::from(Span::styled(
-                format!("Wind gust: {:.1} mph", gust),
+        if let Some(fl) = weather.main.feels_like {
+            lines.push(Spans::from(Span::styled(
+                format!("Feels like: {:.1}°F", fl),
                 Style::default().fg(Color::Blue),
             )));
         }
-        if let Some(deg) = wind.deg {
-            lines.push(Line::from(Span::styled(
-                format!("Wind direction: {}°", deg),
+
+        if let Some(min_temp) = weather.main.temp_min {
+            lines.push(Spans::from(Span::styled(
+                format!("Min temp: {:.1}°F", min_temp),
                 Style::default().fg(Color::Blue),
             )));
         }
-    }
+        if let Some(max_temp) = weather.main.temp_max {
+            lines.push(Spans::from(Span::styled(
+                format!("Max temp: {:.1}°F", max_temp),
+                Style::default().fg(Color::Blue),
+            )));
+        }
 
-    // Coordinates
-    if let Some(coord) = &weather.coord {
-        lines.push(Line::from(Span::styled(
-            format!("Coordinates: lat {:.2}, lon {:.2}", coord.lat, coord.lon),
+        if let Some(pressure) = weather.main.pressure {
+            lines.push(Spans::from(Span::styled(
+                format!("Pressure: {} hPa", pressure),
+                Style::default().fg(Color::Blue),
+            )));
+        }
+
+        lines.push(Spans::from(Span::styled(
+            format!("Humidity: {}%", weather.main.humidity),
             Style::default().fg(Color::Blue),
         )));
-    }
 
-    // Sunrise / Sunset
-    if let Some(sys) = &weather.sys {
-        if let Some(sr) = sys.sunrise {
-            lines.push(Line::from(Span::styled(
-                format!("Sunrise (UTC): {}", format_timestamp(sr)),
-                Style::default().fg(Color::Magenta),
+        if let Some(wind) = &weather.wind {
+            lines.push(Spans::from(Span::styled(
+                format!("Wind speed: {:.1} mph", wind.speed),
+                Style::default().fg(Color::Blue),
+            )));
+            if let Some(gust) = wind.gust {
+                lines.push(Spans::from(Span::styled(
+                    format!("Wind gust: {:.1} mph", gust),
+                    Style::default().fg(Color::Blue),
+                )));
+            }
+            if let Some(deg) = wind.deg {
+                lines.push(Spans::from(Span::styled(
+                    format!("Wind direction: {}°", deg),
+                    Style::default().fg(Color::Blue),
+                )));
+            }
+        }
+
+        if let Some(coord) = &weather.coord {
+            lines.push(Spans::from(Span::styled(
+                format!("Coordinates: lat {:.2}, lon {:.2}", coord.lat, coord.lon),
+                Style::default().fg(Color::Blue),
             )));
         }
-        if let Some(ss) = sys.sunset {
-            lines.push(Line::from(Span::styled(
-                format!("Sunset (UTC): {}", format_timestamp(ss)),
-                Style::default().fg(Color::Magenta),
-            )));
+
+        if let Some(sys) = &weather.sys {
+            if let Some(sr) = sys.sunrise {
+                lines.push(Spans::from(Span::styled(
+                    format!("Sunrise (UTC): {}", format_timestamp(sr)),
+                    Style::default().fg(Color::Magenta),
+                )));
+            }
+            if let Some(ss) = sys.sunset {
+                lines.push(Spans::from(Span::styled(
+                    format!("Sunset (UTC): {}", format_timestamp(ss)),
+                    Style::default().fg(Color::Magenta),
+                )));
+            }
         }
-    }
 
-    // Blank line at end
-    lines.push(Line::from(""));
+        // blank line
+        lines.push(Spans::from(""));
 
-    // Render with a standard block border
-    terminal.draw(|f| {
-        let size = f.area();
         let block = Block::default().borders(Borders::ALL).title("Weather");
-        let paragraph = Paragraph::new(lines).block(block);
-        f.render_widget(paragraph, size);
+        let paragraph = Paragraph::new(lines)
+            .alignment(Alignment::Left)
+            .block(block);
+        frame.render_widget(paragraph, layout[0]);
     })?;
 
     Ok(())
 }
 
 ////////////////////////////////////////////////////////////////////////////////
-// Utilities
+// Utility: Format timestamps
 ////////////////////////////////////////////////////////////////////////////////
 
-/// Returns true if `s` consists only of ASCII digits.
-fn is_numeric(s: &str) -> bool {
-    s.chars().all(|c| c.is_ascii_digit())
-}
-
-/// Formats a Unix timestamp into a human-readable UTC time (YYYY-MM-DD HH:MM:SS).
 fn format_timestamp(timestamp: u64) -> String {
     let timestamp_i64 = timestamp as i64;
     let datetime = Utc

@@ -6,10 +6,16 @@ use anyhow::{anyhow, Result};
 use clap::Parser;
 
 use crossterm::{
-    event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEvent},
+    cursor::MoveTo,
+    event::{self, Event, KeyCode, KeyEvent},
     execute,
-    terminal::{self, EnterAlternateScreen, LeaveAlternateScreen},
+    terminal::{self, Clear, ClearType, disable_raw_mode, enable_raw_mode},
 };
+//
+// If you actually want mouse capture, uncomment the following lines:
+// use crossterm::event::EnableMouseCapture;
+// use crossterm::event::DisableMouseCapture;
+// use crossterm::terminal::{EnterAlternateScreen, LeaveAlternateScreen};
 
 use tui::{
     backend::{Backend, CrosstermBackend},
@@ -46,7 +52,7 @@ const LINE_ENDING: &str = "\n";
 ////////////////////////////////////////////////////////////////////////////////
 
 #[derive(Parser, Debug)]
-#[command(author, version, about = "Secure Notes CLI")]
+#[command(author, version, about = "Secure Notes CLI", long_about = None)]
 struct CliArgs {
     /// Optional path to the encrypted notes file
     #[arg(long, short, default_value = "secure_notes.json.enc")]
@@ -57,7 +63,7 @@ struct CliArgs {
 // SALT & PBKDF2 CONFIG (Demo Purposes Only)
 ////////////////////////////////////////////////////////////////////////////////
 
-/// In production, each user typically requires a **unique** salt and higher iteration count.
+/// In production, each user typically requires a unique salt and higher iteration count.
 /// This static salt is only for demonstration.
 const SALT: &[u8] = b"fixed-salt-demo";
 const PBKDF2_ITERATIONS: u32 = 100_000;
@@ -66,7 +72,7 @@ const PBKDF2_ITERATIONS: u32 = 100_000;
 // Data Structures
 ////////////////////////////////////////////////////////////////////////////////
 
-/// A user-friendlier note ID: 6-digit numeric string.
+/// Generates a user-friendly 6-digit numeric ID.
 fn generate_user_friendly_id() -> String {
     use rand::Rng;
     let mut rng = rand::thread_rng();
@@ -120,32 +126,34 @@ struct App {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    // --------------------------------------------------
-    // 1) Parse CLI args
-    // --------------------------------------------------
+    // 1) Parse CLI arguments
     let args = CliArgs::parse();
 
-    // 2) Enable raw mode
-    terminal::enable_raw_mode()?;
+    // 2) Enable raw mode for TUI
+    enable_raw_mode()?;
 
-    // 3) Set up stdout and enter alternate screen + enable mouse
+    // 3) Construct a CrosstermBackend
+    //
+    // If you do want to capture mouse events + alternate screen, uncomment below:
+    /*
     let mut stdout = io::stdout();
     execute!(stdout, EnableMouseCapture, EnterAlternateScreen)?;
-
-    // 4) Create CrosstermBackend + tui Terminal
     let backend = CrosstermBackend::new(stdout);
+    */
+    // Otherwise, do:
+    let backend = CrosstermBackend::new(io::stdout());
     let mut terminal = Terminal::new(backend)?;
 
-    // 5) Clear the screen
+    // 4) Clear the screen using TUI
     clear_screen(&mut terminal)?;
 
-    // 6) Print a welcome banner (shown only once at app start)
-    print_welcome_banner(&mut terminal)?;
+    // 5) Print a welcome banner once at app start (Paragraph-based)
+    draw_welcome_banner(&mut terminal)?;
 
-    // 7) Print a quick message with cross-platform line ending
+    // 6) Print a quick message with cross-platform line ending
     print!("CLI started successfully!{}", LINE_ENDING);
 
-    // Build initial app state
+    // 7) Build initial app state
     let app = App {
         password: String::new(),
         key: [0u8; 32],
@@ -157,23 +165,32 @@ async fn main() -> Result<()> {
             buffer: String::new(),
         },
         error_message: String::new(),
-        file_path: args.file, // use the file path from CLI args
+        file_path: args.file, // from CLI args
     };
 
     // 8) Run the main TUI loop
-    let res = run_app(&mut terminal, app);
+    let result = run_app(&mut terminal, app);
 
-    // 9) On exit, restore the terminal
-    terminal::disable_raw_mode()?;
+    // 9) Before exiting, restore terminal to normal mode
+    disable_raw_mode()?;
+    // If you used alternate screen + mouse capture, uncomment:
+    /*
     execute!(
         terminal.backend_mut(),
         DisableMouseCapture,
         LeaveAlternateScreen
     )?;
-    terminal.show_cursor()?;
+    */
+    // Otherwise, just clear the entire screen and move cursor to (0,0):
+    execute!(
+        terminal.backend_mut(),
+        Clear(ClearType::All),
+        MoveTo(0, 0)
+    )?;
+    print!("Goodbye!{}", LINE_ENDING);
 
     // If the app returned an error, display it
-    if let Err(e) = res {
+    if let Err(e) = result {
         eprint!("Error: {:?}{}", e, LINE_ENDING);
     }
     Ok(())
@@ -189,16 +206,16 @@ fn clear_screen<B: Backend>(terminal: &mut Terminal<B>) -> Result<()> {
     Ok(())
 }
 
-/// Prints a single-time banner at app launch (separate from the “always-present” TUI banner).
-fn print_welcome_banner<B: Backend>(terminal: &mut Terminal<B>) -> Result<()> {
-    // A minimal text banner for the launch
+/// A single-time banner at app launch (separate from the “always-present” TUI banner).
+fn draw_welcome_banner<B: Backend>(terminal: &mut Terminal<B>) -> Result<()> {
+    // A minimal text banner for launch
     let banner = r#"
     Welcome to Secure Notes!
     ========================
     Your encrypted note management system
     "#;
 
-    // Use a simple Paragraph to display the banner in the center
+    // Use a Paragraph to display the banner in the center
     let size = terminal.size()?;
     let block = Paragraph::new(banner)
         .block(Block::default().borders(Borders::NONE))
@@ -220,7 +237,7 @@ fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> Result<()> {
         // Render the UI for the current state
         terminal.draw(|frame| draw_ui(frame, &app))?;
 
-        // Poll for events
+        // Poll for events (non-blocking)
         if crossterm::event::poll(Duration::from_millis(200))? {
             match event::read()? {
                 Event::Key(key_event) => {
@@ -249,9 +266,10 @@ fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> Result<()> {
 fn draw_ui<B: Backend>(frame: &mut Frame<B>, app: &App) {
     let area = frame.size();
 
-    // Always draw a top banner (ASCII art)
+    // Always draw a top banner (ASCII art) at the top
     draw_banner(frame, area);
 
+    // Dispatch to each screen below
     match app.screen {
         Screen::PasswordPrompt => draw_password_prompt(frame, app, area),
         Screen::Menu => draw_main_menu(frame, app, area),
@@ -296,9 +314,7 @@ fn draw_banner<B: Backend>(frame: &mut Frame<B>, area: Rect) {
     ));
     let line2 = Line::from(Span::raw(banner_text));
 
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .title(" Secure Notes ");
+    let block = Block::default().borders(Borders::ALL).title(" Secure Notes ");
     let paragraph = Paragraph::new(vec![line1, line2]).block(block).style(
         Style::default()
             .fg(Color::Magenta)
@@ -328,7 +344,7 @@ fn draw_password_prompt<B: Backend>(frame: &mut Frame<B>, app: &App, area: Rect)
     frame.render_widget(paragraph, rect);
 }
 
-/// Draw the main menu (7 choices).
+/// Draw the main menu.
 fn draw_main_menu<B: Backend>(frame: &mut Frame<B>, _app: &App, area: Rect) {
     let items = vec![
         ListItem::new("1) View Notes"),
@@ -351,7 +367,7 @@ fn draw_main_menu<B: Backend>(frame: &mut Frame<B>, _app: &App, area: Rect) {
     frame.render_widget(list, rect);
 }
 
-/// Renders the note list in truncated form.
+/// Displays notes in truncated form.
 fn draw_view_notes<B: Backend>(frame: &mut Frame<B>, app: &App, area: Rect) {
     if app.notes.is_empty() {
         let block = Block::default().borders(Borders::ALL).title("View Notes");
@@ -381,7 +397,7 @@ fn draw_view_notes<B: Backend>(frame: &mut Frame<B>, app: &App, area: Rect) {
     frame.render_widget(list, rect);
 }
 
-/// Draws a simple note editor (both create + edit).
+/// Draws a note editor (for both create + edit).
 fn draw_note_editor<B: Backend>(frame: &mut Frame<B>, app: &App, area: Rect) {
     let title = if app.screen == Screen::CreateNote {
         "Create Note (Esc=Save, F2=Discard)"
@@ -399,7 +415,7 @@ fn draw_note_editor<B: Backend>(frame: &mut Frame<B>, app: &App, area: Rect) {
     frame.render_widget(paragraph, rect);
 }
 
-/// Used for prompts like “Enter note ID to delete,” “Enter note ID to open,” etc.
+/// Draws a simple input box (Delete note by ID, open note by ID, etc.).
 fn draw_simple_input<B: Backend>(frame: &mut Frame<B>, app: &App, area: Rect) {
     let title = match app.screen {
         Screen::DeleteNote => "Enter note ID to delete (ENTER=confirm, ESC=cancel)",
@@ -430,12 +446,10 @@ fn handle_key_event(key_event: KeyEvent, app: &mut App) -> Result<()> {
                 app.input_buffer.clear();
                 app.key = derive_key_from_password(&app.password, SALT, PBKDF2_ITERATIONS)?;
 
-                // 2) Try to load existing notes
+                // 2) Try loading existing notes
                 if let Ok(notes) = load_notes(&app.file_path, &app.key) {
                     app.notes = notes;
                 }
-
-                // Move to main menu
                 app.screen = Screen::Menu;
             }
             KeyCode::Char(c) => {
@@ -459,7 +473,7 @@ fn handle_key_event(key_event: KeyEvent, app: &mut App) -> Result<()> {
                 app.screen = Screen::CreateNote;
             }
             KeyCode::Char('3') => {
-                // Prompt for the ID first
+                // Prompt for note ID first
                 app.input_buffer.clear();
                 app.edit_state.note_id = None;
                 app.screen = Screen::EditNote;
@@ -497,7 +511,6 @@ fn handle_key_event(key_event: KeyEvent, app: &mut App) -> Result<()> {
                 };
                 app.notes.push(new_note);
                 save_notes(&app.file_path, &app.notes, &app.key)?;
-                // Return to menu
                 app.screen = Screen::Menu;
             }
             KeyCode::F(n) if n == 2 => {
@@ -514,7 +527,7 @@ fn handle_key_event(key_event: KeyEvent, app: &mut App) -> Result<()> {
         },
         Screen::EditNote => {
             if app.edit_state.note_id.is_none() {
-                // We are expecting a note ID
+                // Expecting a note ID
                 match key_event.code {
                     KeyCode::Char(c) => {
                         app.input_buffer.push(c);
@@ -598,7 +611,7 @@ fn handle_key_event(key_event: KeyEvent, app: &mut App) -> Result<()> {
             KeyCode::Enter => {
                 let id = app.input_buffer.trim();
                 if let Some(n) = app.notes.iter().find(|x| x.id == id) {
-                    // Show the note content in the error area
+                    // Show full note content in the error area (quick way to display it)
                     app.error_message = format!("Full Note: {}", n.content);
                 } else {
                     app.error_message = "Note not found.".to_string();
@@ -691,10 +704,10 @@ fn encrypt_data(plaintext: &[u8], key: &[u8]) -> Result<Vec<u8>> {
     );
 
     let rng = ring_rand::SystemRandom::new();
-    let nonce_bytes =
-        ring_rand::generate::<[u8; 12]>(&rng).map_err(|_| anyhow!("Failed to generate nonce"))?;
-    let nonce_array = nonce_bytes.expose();
-    let nonce = aead::Nonce::assume_unique_for_key(nonce_array);
+    let nonce_bytes = ring_rand::generate::<[u8; 12]>(&rng)
+        .map_err(|_| anyhow!("Failed to generate nonce"))?
+        .expose();
+    let nonce = aead::Nonce::assume_unique_for_key(nonce_bytes);
 
     let mut in_out = plaintext.to_vec();
     in_out.resize(in_out.len() + sealing_key.algorithm().tag_len(), 0);
@@ -704,7 +717,7 @@ fn encrypt_data(plaintext: &[u8], key: &[u8]) -> Result<Vec<u8>> {
         .map_err(|_| anyhow!("Encryption failed"))?;
 
     let mut result = Vec::with_capacity(12 + in_out.len());
-    result.extend_from_slice(&nonce_array);
+    result.extend_from_slice(&nonce_bytes);
     result.extend_from_slice(&in_out);
     Ok(result)
 }
@@ -714,8 +727,8 @@ fn decrypt_data(ciphertext: &[u8], key: &[u8]) -> Result<Vec<u8>> {
         return Err(anyhow!("Ciphertext too short"));
     }
     let (nonce_bytes, encrypted) = ciphertext.split_at(12);
-    let nonce = aead::Nonce::try_assume_unique_for_key(nonce_bytes)
-        .map_err(|_| anyhow!("Invalid nonce"))?;
+    let nonce =
+        aead::Nonce::try_assume_unique_for_key(nonce_bytes).map_err(|_| anyhow!("Invalid nonce"))?;
 
     let opening_key = aead::LessSafeKey::new(
         aead::UnboundKey::new(&aead::CHACHA20_POLY1305, key)
@@ -731,7 +744,7 @@ fn decrypt_data(ciphertext: &[u8], key: &[u8]) -> Result<Vec<u8>> {
 
 fn load_notes<P: AsRef<Path>>(path: P, key: &[u8]) -> Result<Vec<Note>> {
     if !path.as_ref().exists() {
-        // Not necessarily an error. We can safely return an empty list
+        // Not necessarily an error; just return empty list
         return Ok(Vec::new());
     }
     let mut file = OpenOptions::new().read(true).open(path)?;

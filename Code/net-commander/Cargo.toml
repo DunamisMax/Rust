@@ -8,3 +8,4 @@ tokio = { version = "*", features = ["full"] }
 crossterm = "*"
 clap = { version = "*", features = ["derive"] }
 tui = "*"
+anyhow = "*"

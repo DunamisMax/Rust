@@ -16,7 +16,7 @@ use std::{
 use chrono::{DateTime, Local};
 use clap::Parser;
 use crossterm::{
-    event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyModifiers},
+    event::{self, Event, KeyCode, KeyModifiers},
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, Clear, ClearType},
 };
@@ -115,32 +115,26 @@ async fn main() -> Result<(), DynError> {
 
     // Enable raw mode for TUI
     enable_raw_mode()?;
-    let mut stdout = io::stdout();
-    // Capture mouse events, if desired
-    execute!(stdout, EnableMouseCapture)?;
+    let stdout = io::stdout();
 
-    // Construct a CrosstermBackend for tui
+    // Construct a CrosstermBackend for tui (no mouse capture here)
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
     // 1) Clear the screen for a clean start
     clear_screen(&mut terminal)?;
 
-    // 2) Print a full-screen welcome banner (via TUI)
-    print_welcome_banner(&mut terminal)?;
-
-    // 3) Print a quick status message (if you'd like)
+    // Print a quick status message (if you'd like)
     print!("CLI started successfully!{}", LINE_ENDING);
 
     // Create our app state
     let mut app_state = AppState::new()?;
 
-    // 4) Enter the TUI event loop
+    // 2) Enter the TUI event loop
     let res = run_app(&mut terminal, &mut app_state);
 
-    // 5) On exit, restore normal terminal mode
+    // 3) On exit, restore normal terminal mode
     disable_raw_mode()?;
-    execute!(terminal.backend_mut(), DisableMouseCapture)?;
 
     // Optionally clear screen on exit and say goodbye
     execute!(
@@ -172,16 +166,16 @@ fn run_app<B: tui::backend::Backend>(
             let chunks = Layout::default()
                 .direction(Direction::Vertical)
                 .constraints([
-                    Constraint::Length(8),  // banner/instructions area
+                    Constraint::Length(8),  // top area (title + instructions)
                     Constraint::Length(14), // menu area
                     Constraint::Min(10),    // log area
                 ])
                 .split(frame.size());
 
-            // (1) Top pane: Banner + instructions
+            // (1) Top pane: Title + instructions
             let top_text = vec![
                 Spans::from(Span::styled(
-                    "File Commander TUI",
+                    "file-commander",
                     Style::default()
                         .fg(Color::Cyan)
                         .add_modifier(Modifier::BOLD),
@@ -193,8 +187,11 @@ fn run_app<B: tui::backend::Backend>(
                     app_state.current_dir.display()
                 )),
             ];
-            let top_paragraph = Paragraph::new(top_text)
-                .block(Block::default().borders(Borders::ALL).title(" Banner "));
+            let top_paragraph = Paragraph::new(top_text).block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title(" file-commander "),
+            );
             frame.render_widget(top_paragraph, chunks[0]);
 
             // (2) Middle pane: Menu
@@ -287,7 +284,7 @@ fn run_app<B: tui::backend::Backend>(
 }
 
 ////////////////////////////////////////////////////////////////////////////////
-// Clear Screen & Welcome Banner (TUI)
+// Clear Screen
 ////////////////////////////////////////////////////////////////////////////////
 
 /// Clears the terminal screen for a clean start using tui.
@@ -295,32 +292,6 @@ fn clear_screen(
     terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>,
 ) -> Result<(), DynError> {
     terminal.clear()?;
-    Ok(())
-}
-
-/// Prints a banner with ASCII art at the top using tui widgets.
-/// This is shown **once** at startup in a full-screen layout.
-fn print_welcome_banner(
-    terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>,
-) -> Result<(), DynError> {
-    let banner = r#"
-  __  _  _                                                              _
- / _|(_)| |                                                            | |
-| |_  _ | |  ___    ___   ___   _ __ ___   _ __ ___    __ _  _ __    __| |  ___  _ __
-|  _|| || | / _ \  / __| / _ \ | '_ ` _ \ | '_ ` _ \  / _` || '_ \  / _` | / _ \| '__|
-| |  | || ||  __/ | (__ | (_) || | | | | || | | | | || (_| || | | || (_| ||  __/| |
-|_|  |_||_| \___|  \___| \___/ |_| |_| |_||_| |_| |_| \__,_||_| |_| \__,_| \___||_|
-"#;
-
-    // Temporarily draw the banner in a single layout chunk
-    terminal.draw(|frame| {
-        let size = frame.size();
-        let paragraph = Paragraph::new(banner)
-            .block(Block::default().borders(Borders::NONE))
-            .style(Style::default().fg(Color::Cyan));
-        frame.render_widget(paragraph, size);
-    })?;
-
     Ok(())
 }
 
@@ -863,7 +834,7 @@ fn move_file_or_dry_run(
 ) -> Result<(), DynError> {
     if !dry_run {
         fs::create_dir_all(target_dir)?;
-        // Use `ok_or(...)` instead of `ok_or_else` to satisfy Clippy's recommendation
+        // Use `ok_or(...)` instead of `ok_or_else` to satisfy Clippy
         let target_path = target_dir.join(path.file_name().ok_or("No filename found in path")?);
         fs::rename(path, &target_path)?;
         app_state.log_lines.push(format!(

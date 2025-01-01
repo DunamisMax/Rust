@@ -1,14 +1,4 @@
 ////////////////////////////////////////////////////////////////////////////////
-// Cargo.toml Dependencies (add these to your [dependencies] section):
-//
-// clap = "4.3"
-// crossterm = "0.26"
-// tui = "0.20"
-// tokio = { version = "1.32", features = ["rt-multi-thread", "macros"] }
-// anyhow = "1.0"
-////////////////////////////////////////////////////////////////////////////////
-
-////////////////////////////////////////////////////////////////////////////////
 // Imports
 ////////////////////////////////////////////////////////////////////////////////
 
@@ -23,17 +13,18 @@ use clap::Parser;
 
 // Crossterm
 use crossterm::{
-    event::{self, DisableMouseCapture, EnableMouseCapture, Event as CEvent, KeyCode},
+    cursor::MoveTo,
+    event::{self, Event as CEvent, KeyCode},
     execute,
-    terminal::{disable_raw_mode, enable_raw_mode},
+    terminal::{disable_raw_mode, enable_raw_mode, Clear, ClearType},
 };
 
 // TUI (tui-rs)
 use tui::{
     backend::CrosstermBackend,
-    layout::{Constraint, Direction, Layout},
+    layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
-    text::Span,
+    text::{Span, Spans},
     widgets::{Block, Borders, List, ListItem, Paragraph},
     Terminal,
 };
@@ -69,36 +60,69 @@ struct CliArgs {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    // Parse command-line arguments
+    // 1) Parse CLI arguments
     let args = CliArgs::parse();
     if args.verbose {
         print!("Verbose mode enabled...{}", LINE_ENDING);
     }
 
-    // Enable raw mode to manage TUI
+    // 2) Enable raw mode for TUI and construct a CrosstermBackend
     enable_raw_mode()?;
-    let mut stdout = io::stdout();
-    execute!(stdout, EnableMouseCapture)?;
-
-    // Setup TUI Terminal
-    let backend = CrosstermBackend::new(stdout);
+    let backend = CrosstermBackend::new(io::stdout());
     let mut terminal = Terminal::new(backend)?;
 
-    // Clear the screen and display the welcome banner
+    // 3) Clear the screen and display a welcome “banner”
     clear_screen(&mut terminal)?;
-    print_welcome_banner(&mut terminal)?;
+    draw_welcome_banner(&mut terminal)?;
 
-    // Run the TUI-based main menu
-    if let Err(e) = run_app(&mut terminal).await {
-        eprintln!("Application error: {}", e);
+    print!("CLI started successfully!{}", LINE_ENDING);
+
+    // 4) Run the main TUI loop (menu navigation, etc.)
+    if let Err(e) = run_main_menu(&mut terminal).await {
+        eprint!("Application error: {}{}", e, LINE_ENDING);
     }
 
-    // Before exiting, restore the terminal to normal mode
+    // 5) Before exiting, restore the terminal to normal mode and clear
     disable_raw_mode()?;
-    execute!(
-        terminal.backend_mut(),
-        DisableMouseCapture
-    )?;
+    execute!(terminal.backend_mut(), Clear(ClearType::All), MoveTo(0, 0))?;
+    print!("Goodbye!{}", LINE_ENDING);
+
+    Ok(())
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// Initial Screen / Banner
+////////////////////////////////////////////////////////////////////////////////
+
+/// Clears the terminal screen for a clean start using TUI + crossterm.
+fn clear_screen<B: tui::backend::Backend>(terminal: &mut Terminal<B>) -> Result<()> {
+    terminal.clear()?;
+    Ok(())
+}
+
+/// Draws a basic “banner” (ASCII art / heading) via a `Paragraph`.
+fn draw_welcome_banner<B: tui::backend::Backend>(terminal: &mut Terminal<B>) -> Result<()> {
+    terminal.draw(|frame| {
+        let size = frame.size();
+
+        // Simple layout: just center a paragraph with the name
+        let block = Block::default().borders(Borders::NONE);
+        frame.render_widget(block, size);
+
+        // Example ASCII art or simple banner text
+        let banner_text = vec![Spans::from(Span::raw("Welcome to NetCommander!"))];
+
+        let paragraph = Paragraph::new(banner_text)
+            .style(
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            )
+            .alignment(Alignment::Center);
+
+        frame.render_widget(paragraph, size);
+    })?;
+
     Ok(())
 }
 
@@ -148,23 +172,32 @@ impl App {
     }
 }
 
+////////////////////////////////////////////////////////////////////////////////
+// Main Menu Loop
+////////////////////////////////////////////////////////////////////////////////
+
 /// Runs the main TUI loop, handling user input and rendering.
-async fn run_app<B: tui::backend::Backend>(terminal: &mut Terminal<B>) -> Result<()> {
+async fn run_main_menu<B: tui::backend::Backend>(terminal: &mut Terminal<B>) -> Result<()> {
     let mut app = App::new();
 
     loop {
         // Draw the UI
         terminal.draw(|frame| {
-            // Split the screen into top (banner) and bottom (menu) sections
+            // Split the screen into top (title) and bottom (menu) sections
             let chunks = Layout::default()
                 .direction(Direction::Vertical)
-                .constraints([Constraint::Length(7), Constraint::Min(1)].as_ref())
+                .constraints([Constraint::Length(3), Constraint::Min(1)].as_ref())
                 .split(frame.size());
 
-            // Top section: simple ASCII or instructions
-            let banner = Paragraph::new("Welcome to NetCommander!")
-                .style(Style::default().fg(Color::Cyan));
-            frame.render_widget(banner, chunks[0]);
+            // Top section: display the application title
+            let title_paragraph = Paragraph::new("net-commander")
+                .style(
+                    Style::default()
+                        .fg(Color::Cyan)
+                        .add_modifier(Modifier::BOLD),
+                )
+                .block(Block::default().borders(Borders::NONE));
+            frame.render_widget(title_paragraph, chunks[0]);
 
             // Bottom section: main menu items
             let items: Vec<ListItem> = app
@@ -187,8 +220,8 @@ async fn run_app<B: tui::backend::Backend>(terminal: &mut Terminal<B>) -> Result
                 })
                 .collect();
 
-            let list = List::new(items)
-                .block(Block::default().borders(Borders::ALL).title("Main Menu"));
+            let list =
+                List::new(items).block(Block::default().borders(Borders::ALL).title("Main Menu"));
             frame.render_widget(list, chunks[1]);
         })?;
 
@@ -288,33 +321,6 @@ async fn handle_menu_choice(choice: char) -> Result<bool> {
 // Utility Functions
 ////////////////////////////////////////////////////////////////////////////////
 
-/// Clears the terminal screen for a clean start using TUI + crossterm.
-fn clear_screen<B: tui::backend::Backend>(terminal: &mut Terminal<B>) -> Result<()> {
-    terminal.clear()?;
-    Ok(())
-}
-
-/// Prints a banner with ASCII art at the top using tui widgets.
-fn print_welcome_banner<B: tui::backend::Backend>(terminal: &mut Terminal<B>) -> Result<()> {
-    let banner = r#"
-              _                                                          _
-             | |                                                        | |
- _ __    ___ | |_    ___   ___   _ __ ___   _ __ ___    __ _  _ __    __| |  ___  _ __
-| '_ \  / _ \| __|  / __| / _ \ | '_ ` _ \ | '_ ` _ \  / _` || '_ \  / _` | / _ \| '__|
-| | | ||  __/| |_  | (__ | (_) || | | | | || | | | | || (_| || | | || (_| ||  __/| |
-|_| |_| \___| \__|  \___| \___/ |_| |_| |_||_| |_| |_| \__,_||_| |_| \__,_| \___||_|
-"#,
-    .to_string();
-
-    terminal.draw(|f| {
-        let size = f.size();
-        let paragraph = Paragraph::new(banner)
-            .style(Style::default().fg(Color::Green));
-        f.render_widget(paragraph, size);
-    })?;
-    Ok(())
-}
-
 /// Waits for a single keypress (discarding the result).
 pub async fn wait_for_keypress() {
     loop {
@@ -326,13 +332,11 @@ pub async fn wait_for_keypress() {
 
 /// Gracefully exit app: show a goodbye message, etc.
 fn exit_app() {
-    // We can restore terminal stuff in main.
-    // Here we just print a farewell message.
     print!("Exiting net-commander. Goodbye!{}", LINE_ENDING);
 }
 
 ////////////////////////////////////////////////////////////////////////////////
-// Sub-Menu & Network Functions (Mostly the same as your original code)
+// Sub-Menu & Network Functions
 ////////////////////////////////////////////////////////////////////////////////
 
 async fn ping_host_menu() {
@@ -424,7 +428,9 @@ async fn port_scan_menu() {
     let mut handles = Vec::new();
     for port in start_port..=end_port {
         let host_clone = host.clone();
-        handles.push(tokio::spawn(async move { scan_port(&host_clone, port).await }));
+        handles.push(tokio::spawn(
+            async move { scan_port(&host_clone, port).await },
+        ));
     }
 
     let mut open_ports = Vec::new();
@@ -435,7 +441,10 @@ async fn port_scan_menu() {
     }
 
     if open_ports.is_empty() {
-        print!("No open TCP ports found in the specified range.{}", LINE_ENDING);
+        print!(
+            "No open TCP ports found in the specified range.{}",
+            LINE_ENDING
+        );
     } else {
         print!("Open TCP ports: {:?}{}", open_ports, LINE_ENDING);
     }
@@ -449,7 +458,7 @@ async fn scan_port(host: &str, port: u16) -> Option<u16> {
     let addr = format!("{}:{}", host, port);
     match timeout(Duration::from_millis(500), TcpStream::connect(&addr)).await {
         Ok(Ok(_)) => Some(port), // Connected => open
-        _ => None,              // Timed out or error => closed/filtered
+        _ => None,               // Timed out or error => closed/filtered
     }
 }
 
@@ -547,7 +556,10 @@ async fn subnet_scan_menu() {
     let cidr_bits: u8 = parts[1].parse().unwrap_or(24);
 
     if cidr_bits != 24 {
-        print!("Only /24 subnets are supported in this demo.{}", LINE_ENDING);
+        print!(
+            "Only /24 subnets are supported in this demo.{}",
+            LINE_ENDING
+        );
         wait_for_keypress().await;
         return;
     }
@@ -572,7 +584,10 @@ async fn subnet_scan_menu() {
     }
 
     if reachable.is_empty() {
-        print!("No hosts responded to ping in that /24 subnet.{}", LINE_ENDING);
+        print!(
+            "No hosts responded to ping in that /24 subnet.{}",
+            LINE_ENDING
+        );
     } else {
         print!(
             "Hosts responding to ping in {}/{}:{}",
@@ -642,23 +657,35 @@ fn detect_firewall_and_vpn() {
             if out.contains("active") {
                 print!("firewalld service is ACTIVE.{}", LINE_ENDING);
             } else {
-                print!("firewalld service is not active or not found.{}", LINE_ENDING);
+                print!(
+                    "firewalld service is not active or not found.{}",
+                    LINE_ENDING
+                );
             }
         }
 
         let iptables_check = Command::new("iptables").arg("-L").output();
         if let Ok(o) = iptables_check {
             let out = String::from_utf8_lossy(&o.stdout);
-            print!("`iptables -L` returned:{}{}{}", LINE_ENDING, out, LINE_ENDING);
+            print!(
+                "`iptables -L` returned:{}{}{}",
+                LINE_ENDING, out, LINE_ENDING
+            );
         }
 
         let ifconfig_check = Command::new("ifconfig").output();
         if let Ok(o) = ifconfig_check {
             let out = String::from_utf8_lossy(&o.stdout).to_lowercase();
             if out.contains("tun0") || out.contains("ppp0") || out.contains("wg0") {
-                print!("A VPN or tunneling interface might be active.{}", LINE_ENDING);
+                print!(
+                    "A VPN or tunneling interface might be active.{}",
+                    LINE_ENDING
+                );
             } else {
-                print!("No obvious VPN interface found (tun0/ppp0/wg0).{}", LINE_ENDING);
+                print!(
+                    "No obvious VPN interface found (tun0/ppp0/wg0).{}",
+                    LINE_ENDING
+                );
             }
         }
     }
@@ -707,7 +734,10 @@ async fn latency_monitoring_menu() {
         tokio::time::sleep(Duration::from_secs(1)).await;
     }
 
-    print!("Stopped. Press any key to return to main menu...{}", LINE_ENDING);
+    print!(
+        "Stopped. Press any key to return to main menu...{}",
+        LINE_ENDING
+    );
     wait_for_keypress().await;
 }
 
@@ -729,10 +759,7 @@ async fn traceroute_menu() {
         return;
     }
 
-    print!(
-        "Performing traceroute to {} ...{}",
-        host, LINE_ENDING
-    );
+    print!("Performing traceroute to {} ...{}", host, LINE_ENDING);
 
     if cfg!(target_os = "windows") {
         let output = Command::new("tracert").arg(host.clone()).output();

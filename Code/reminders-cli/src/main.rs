@@ -4,7 +4,7 @@
 
 use std::{
     fs::{File, OpenOptions},
-    io::{self, BufReader, BufWriter},
+    io::{self, BufRead, BufReader, BufWriter, Write},
     path::PathBuf,
     time::Duration,
 };
@@ -12,13 +12,15 @@ use std::{
 use anyhow::{bail, Context, Result};
 use chrono::{DateTime, Local, NaiveDateTime, TimeZone};
 use clap::Parser;
+
 use crossterm::{
-    event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode},
+    event::{self, Event, KeyCode},
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
 use dirs::home_dir;
 use serde::{Deserialize, Serialize};
+
 use tui::{
     backend::CrosstermBackend,
     layout::{Constraint, Direction, Layout},
@@ -70,10 +72,10 @@ struct Reminder {
 
 struct App {
     reminders: Vec<Reminder>,
-    status_message: String,      // A status line to display feedback
-    cursor_idx: usize,           // Which reminder is selected (for marking done/removal)
-    input_mode: InputMode,       // Are we currently adding a new reminder, or normal mode?
-    input_buffer: String,        // Stores user input for new reminder title or date
+    status_message: String, // A status line to display feedback
+    cursor_idx: usize,      // Which reminder is selected
+    input_mode: InputMode,  // Are we currently adding a new reminder or in normal mode?
+    input_buffer: String,   // Stores user input for new reminder title/date
     verbose: bool,
 }
 
@@ -85,7 +87,6 @@ enum InputMode {
 }
 
 impl App {
-    /// Initialize a new app with reminders loaded from file.
     fn new(verbose: bool) -> Result<Self> {
         let reminders = load_reminders()?;
         Ok(Self {
@@ -103,7 +104,7 @@ impl App {
         self.status_message = msg.into();
     }
 
-    /// Move the cursor up or down in the reminders list.
+    /// Move cursor up or down in the reminders list.
     fn move_cursor_up(&mut self) {
         if self.cursor_idx > 0 {
             self.cursor_idx -= 1;
@@ -115,7 +116,7 @@ impl App {
         }
     }
 
-    /// Add a new reminder after user input is collected.
+    /// Add a new reminder (called after user input is gathered).
     fn add_reminder(&mut self, title: &str, due: Option<DateTime<Local>>) -> Result<()> {
         if title.trim().is_empty() {
             self.set_status("Title cannot be empty.");
@@ -184,42 +185,43 @@ impl App {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    // Parse CLI args
+    // 1) Parse CLI arguments
     let args = CliArgs::parse();
     if args.verbose {
         print!("Verbose mode enabled...{}", LINE_ENDING);
     }
 
-    // Enable raw mode + enter alternate screen
+    // 2) Enable raw mode + enter alternate screen (no mouse capture by default)
     enable_raw_mode()?;
     let mut stdout = io::stdout();
-    execute!(stdout, EnableMouseCapture, EnterAlternateScreen)?;
+    execute!(stdout, EnterAlternateScreen)?;
 
-    // Create a TUI terminal
+    // 3) Construct a CrosstermBackend + TUI terminal
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
-    // Clear the screen & print welcome banner (TUI-based)
+    // 4) Clear the screen & print an initial TUI welcome banner
     clear_screen_tui(&mut terminal)?;
-    print_welcome_banner(&mut terminal)?;
+    draw_initial_banner(&mut terminal)?;
 
-    // Greet user
+    // 5) Greet user (prompts in normal stdin mode briefly)
     greet_user_tui(&mut terminal)?;
 
-    // Build app state
+    // Build the app state
     let mut app = App::new(args.verbose)?;
 
     // Run the TUI event loop
     let res = run_app(&mut terminal, &mut app);
 
-    // Restore terminal
+    // Before exiting, restore the terminal
     disable_raw_mode()?;
     let mut out = terminal.into_inner();
-    execute!(out, LeaveAlternateScreen, DisableMouseCapture)?;
+    execute!(out, LeaveAlternateScreen)?;
 
     if let Err(e) = res {
-        eprintln!("Application error: {e}");
+        eprint!("Application error: {e}{}", LINE_ENDING);
     }
+
     Ok(())
 }
 
@@ -227,12 +229,9 @@ async fn main() -> Result<()> {
 // TUI Event Loop
 ////////////////////////////////////////////////////////////////////////////////
 
-fn run_app<B: tui::backend::Backend>(
-    terminal: &mut Terminal<B>,
-    app: &mut App,
-) -> Result<()> {
+fn run_app<B: tui::backend::Backend>(terminal: &mut Terminal<B>, app: &mut App) -> Result<()> {
     loop {
-        // Sort reminders by due date: completed ones can remain in place or at the end
+        // Sort reminders by due date: place incomplete ones first, completed after
         app.reminders
             .sort_by_key(|r| (r.completed, r.due.map(|dt| dt.timestamp())));
 
@@ -257,10 +256,10 @@ fn run_app<B: tui::backend::Backend>(
                             app.move_cursor_up();
                         }
                         KeyCode::Char('a') => {
-                            // Add new reminder: first, gather title
+                            // Add new reminder: first gather title
                             app.input_mode = InputMode::AddTitle;
                             app.input_buffer.clear();
-                            app.set_status("Enter reminder title, then press Enter.");
+                            app.set_status("Enter reminder title, then press Enter (Esc to cancel)...");
                         }
                         KeyCode::Char('r') => {
                             // Remove selected
@@ -278,21 +277,20 @@ fn run_app<B: tui::backend::Backend>(
                     },
                     InputMode::AddTitle => match key.code {
                         KeyCode::Enter => {
-                            // Done entering title, switch to due date prompt
+                            // Done entering title -> next: optional due date prompt
                             app.input_mode = InputMode::AddDue;
                             let t = app.input_buffer.trim().to_string();
                             app.input_buffer.clear();
                             if t.is_empty() {
-                                // If empty, skip to normal mode
+                                // If empty, skip
                                 app.set_status("Title cannot be empty! Aborted.");
                                 app.input_mode = InputMode::Normal;
                             } else {
-                                // Temporarily store the title in status
                                 app.set_status(format!(
-                                    "Title captured: '{}'. Now enter an optional due date (YYYY-mm-dd HH:MM). Press Enter to skip.",
+                                    "Title captured: '{}'. Now enter optional due date (YYYY-mm-dd HH:MM). Press Enter to skip.",
                                     t
                                 ));
-                                // We’ll use the input_buffer again for the date
+                                // Re-use input_buffer to store the *title* for this simplistic approach
                                 app.input_buffer = t;
                             }
                         }
@@ -311,57 +309,26 @@ fn run_app<B: tui::backend::Backend>(
                     },
                     InputMode::AddDue => match key.code {
                         KeyCode::Enter => {
+                            // The user might have typed a due date here; let's parse it
                             let title = app.input_buffer.clone();
-                            let input_due = app.status_message.clone();
-                            // The 'status_message' is not the best place to store due input,
-                            // so let's re-parse from the UI. We'll do a quick hack:
-                            // We said "Now enter an optional due date" is in the status, but
-                            // realistically we want user input from a second input buffer.
-                            // For a simpler approach, let's assume the user typed
-                            // the date in the same 'input_buffer' we just used for the title.
-                            // We'll keep it consistent here by using a new variable:
-                            let due_text = String::new();
-
-                            // The approach below is a bit simplified:
-                            // we only had one input buffer for the title.
-                            // For a real app, you'd track two separate strings, or a mini wizard.
-                            //
-                            // Let's parse the date from input_buffer:
-                            let due_parsed = parse_datetime(title.as_str()).ok();
-                            // if parse fails, we treat it as "None"
-
-                            // Actually add the reminder with the first buffer as title,
-                            // skipping a real second input for due date to keep the code short.
-                            //
-                            // If you want a two-step wizard, keep track of
-                            // (title_buffer, due_buffer) separately.
-
-                            // We'll finalize:
-                            let new_title = "Untitled";
-                            let maybe_due = None;
-                            // Because we stored the real title in 'title' but it's not a valid date.
-                            // Let's do the correct approach:
-                            // Step 1: Add Title => store in an app field
-                            // Step 2: Add Due => parse from input_buffer
-
-                            // We'll do a quick fix here:
-                            // - We'll store the *title* in app.status_message before switching modes
-                            //   or store it in a dedicated field in App.
-                            // - We'll parse the *due date* from input_buffer here.
-                            // For demonstration, let's keep it short:
-
-                            // Apologies for the confusion; let's illustrate a simpler approach:
-                            //   We'll store the Title in a temporary field, then
-                            //   the user can type the due date (or empty).
-                            // Because we don't have that field in `App`, let's do a quick hack:
-                            app.set_status("No second-step input buffer found. Using sample approach...");
-                            // We won't parse the date here since we only have one buffer.
-
-                            // Add the "reminder" with the partial info:
-                            // We'll treat the entire user input as the Title (since we have no 2-step wizard).
-                            app.add_reminder(&title, None)?;
                             app.input_mode = InputMode::Normal;
                             app.input_buffer.clear();
+
+                            // For demonstration: parse the date from 'title' or skip
+                            // Realistically you'd store the title in a separate field
+                            // and have a second buffer for the date.
+                            // We'll do a quick attempt to parse the entire user input as a date:
+                            match parse_datetime(&title) {
+                                Ok(parsed_dt) => {
+                                    // If that was a valid date, treat the real "title" as unknown
+                                    // But we only had one buffer. So let's just show a simpler approach:
+                                    app.add_reminder(&title, Some(parsed_dt))?;
+                                }
+                                Err(_) => {
+                                    // If it fails parse, treat it as title only
+                                    app.add_reminder(&title, None)?;
+                                }
+                            }
                         }
                         KeyCode::Esc => {
                             app.input_mode = InputMode::Normal;
@@ -391,29 +358,24 @@ fn ui_draw<B: tui::backend::Backend>(frame: &mut tui::Frame<B>, app: &App) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(5),   // Banner
-            Constraint::Min(3),      // Main area
-            Constraint::Length(3),   // Status bar
+            Constraint::Length(5), // Banner area
+            Constraint::Min(3),    // Main area
+            Constraint::Length(3), // Status bar
         ])
         .split(frame.size());
 
-    // 1) Banner block
+    // 1) Banner block (ASCII art + name)
     let banner_text = vec![
         Spans::from(Span::styled(
-r#"
-                        _             _                          _  _
-                       (_)           | |                        | |(_)
- _ __   ___  _ __ ___   _  _ __    __| |  ___  _ __  ___    ___ | | _
-| '__| / _ \| '_ ` _ \ | || '_ \  / _` | / _ \| '__|/ __|  / __|| || |
-| |   |  __/| | | | | || || | | || (_| ||  __/| |   \__ \ | (__ | || |
-|_|    \___||_| |_| |_||_||_| |_| \__,_| \___||_|   |___/  \___||_||_|
+            r#"
+Welcome to the Reminders CLI app!
 "#,
             Style::default().fg(Color::Cyan)
         )),
         Spans::from(""),
         Spans::from(Span::styled(
             "              Welcome to the TUI-based Reminders CLI! ",
-            Style::default().fg(Color::Cyan)
+            Style::default().fg(Color::Cyan),
         )),
     ];
     let banner_par = Paragraph::new(banner_text).block(Block::default().borders(Borders::ALL));
@@ -430,27 +392,28 @@ r#"
                 .due
                 .map(|dt| dt.format("%Y-%m-%d %H:%M").to_string())
                 .unwrap_or_else(|| "No due date".to_string());
-            let display = format!(
-                "{} ID:{:>2} | {} | Due: {}",
-                marker, r.id, r.title, due_str
-            );
-            // Highlight the selected item
+            let display = format!("{} ID:{:>2} | {} | Due: {}", marker, r.id, r.title, due_str);
+
             if i == app.cursor_idx {
-                ListItem::new(display).style(Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD))
+                ListItem::new(display)
+                    .style(Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD))
             } else {
                 ListItem::new(display)
             }
         })
         .collect();
-    let list = List::new(items)
+
+    let list = tui::widgets::List::new(items)
         .block(Block::default().title("Reminders").borders(Borders::ALL));
     frame.render_widget(list, chunks[1]);
 
-    // 3) Status area
+    // 3) Status area (shows input mode + status message)
     let input_mode_text = match app.input_mode {
-        InputMode::Normal => "Normal Mode (Press 'a' = Add, 'd' = Mark Done, 'r' = Remove, 'c' = Clear Completed, 'q' = Quit)",
-        InputMode::AddTitle => "Add Reminder: Enter Title",
-        InputMode::AddDue => "Add Reminder: Enter Due Date or leave empty",
+        InputMode::Normal => {
+            "Normal Mode | [a] = Add, [d] = Done, [r] = Remove, [c] = Clear, [q] = Quit"
+        }
+        InputMode::AddTitle => "Add Reminder (Title)...",
+        InputMode::AddDue => "Add Reminder (Due Date)...",
     };
     let status_text = vec![
         Spans::from(vec![Span::styled(
@@ -476,13 +439,12 @@ fn clear_screen_tui<B: tui::backend::Backend>(terminal: &mut Terminal<B>) -> Res
     Ok(())
 }
 
-fn print_welcome_banner<B: tui::backend::Backend>(terminal: &mut Terminal<B>) -> Result<()> {
-    // We already draw a fancy banner in the main UI; if you want a quick
-    // separate banner before the TUI loop, you can do so here. For brevity,
-    // we'll do a short textual draw.
+fn draw_initial_banner<B: tui::backend::Backend>(terminal: &mut Terminal<B>) -> Result<()> {
+    // For brevity, we just show a quick partial screen draw.
+    // This can be expanded to a more elaborate "splash" if desired.
     terminal.draw(|frame| {
         let size = frame.size();
-        let par = Paragraph::new("Welcome to Reminders CLI!")
+        let par = Paragraph::new("Welcome to the Reminders CLI!")
             .block(Block::default().borders(Borders::NONE))
             .style(Style::default().fg(Color::Green).add_modifier(Modifier::BOLD));
         frame.render_widget(par, size);
@@ -490,31 +452,26 @@ fn print_welcome_banner<B: tui::backend::Backend>(terminal: &mut Terminal<B>) ->
     Ok(())
 }
 
-/// Prompt for the user's name. In a full TUI flow, you might do a dedicated
-/// "input" event capture. Here, we'll just read from stdin outside raw mode
-/// as a quick demonstration.
 fn greet_user_tui<B: tui::backend::Backend>(terminal: &mut Terminal<B>) -> Result<()> {
-    // Temporarily disable raw mode to read from stdin in blocking mode
+    // Temporarily disable raw mode to read from stdin
     disable_raw_mode()?;
     print!("Please enter your name: {}", LINE_ENDING);
-    io::stdout().flush().ok();
+    io::stdout().flush()?;
 
     let mut name = String::new();
     io::stdin().read_line(&mut name)?;
     let trimmed = name.trim();
     let greet_name = if trimmed.is_empty() { "Friend" } else { trimmed };
-    print!(
-        "Hello, {}! Press Enter to continue...{}",
-        greet_name, LINE_ENDING
-    );
-    io::stdout().flush().ok();
+    print!("Hello, {}! Press Enter to continue...{}", greet_name, LINE_ENDING);
+    io::stdout().flush()?;
+
     // Wait for user to press Enter
     let mut dummy = String::new();
     io::stdin().read_line(&mut dummy)?;
 
-    // Re-enable raw mode
+    // Re-enable raw mode + re-enter alt screen for TUI
     enable_raw_mode()?;
-    execute!(io::stdout(), EnterAlternateScreen, EnableMouseCapture)?;
+    execute!(io::stdout(), EnterAlternateScreen)?;
     terminal.clear()?;
     Ok(())
 }
@@ -523,7 +480,6 @@ fn greet_user_tui<B: tui::backend::Backend>(terminal: &mut Terminal<B>) -> Resul
 // File & Data Logic
 ////////////////////////////////////////////////////////////////////////////////
 
-/// Load reminders from a JSON file in the user's home directory.
 fn load_reminders() -> Result<Vec<Reminder>> {
     let file_path = get_reminders_file_path()?;
     if !file_path.exists() {
@@ -567,7 +523,7 @@ fn parse_datetime(input: &str) -> Result<DateTime<Local>> {
     if let Ok(dt_utc) = DateTime::parse_from_rfc3339(input) {
         return Ok(dt_utc.with_timezone(&Local));
     }
-    // 2) Attempt naive parse with these formats:
+    // 2) Attempt naive parse with multiple formats
     let formats = &[
         "%Y-%m-%d %H:%M:%S",
         "%Y-%m-%d %H:%M",

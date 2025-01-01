@@ -95,23 +95,23 @@ In addition to the above overarching Rust expertise, whenever you produce **Rust
 // Imports
 ////////////////////////////////////////////////////////////////////////////////
 
-use std::io;
 use anyhow::Result;
-use clap::Parser; // Example usage of Clap
-
-// Crossterm
-use crossterm::{
-    event::EnableMouseCapture,
-    terminal::{enable_raw_mode, disable_raw_mode},
-    execute,
+use clap::Parser;
+use std::{
+    io::{self, Write},
 };
 
-// TUI (tui-rs)
+use crossterm::{
+    cursor::MoveTo,
+    execute,
+    terminal::{disable_raw_mode, enable_raw_mode, Clear, ClearType},
+};
 use tui::{
     backend::CrosstermBackend,
+    layout::{Alignment, Constraint, Direction, Layout},
+    style::{Color, Modifier, Style},
+    text::{Span, Spans},
     widgets::{Block, Borders, Paragraph},
-    layout::{Layout, Constraint, Direction},
-    style::{Color, Style},
     Terminal,
 };
 
@@ -119,22 +119,18 @@ use tui::{
 // Cross-Platform Line Endings
 ////////////////////////////////////////////////////////////////////////////////
 
-# [cfg(windows)]
-
+#[cfg(windows)]
 const LINE_ENDING: &str = "\r\n";
 
-# [cfg(not(windows))]
-
+#[cfg(not(windows))]
 const LINE_ENDING: &str = "\n";
 
 ////////////////////////////////////////////////////////////////////////////////
-// CLI Arguments (Example)
+// CLI Arguments
 ////////////////////////////////////////////////////////////////////////////////
 
-# [derive(Parser, Debug)]
-
-# [command(author, version, about = "Example TUI-based CLI", long_about = None)]
-
+#[derive(Parser, Debug)]
+#[command(author, version, about = "Hello World TUI App", long_about = None)]
 struct CliArgs {
     /// Example of a positional argument
     #[arg(value_name = "SOME_VALUE")]
@@ -149,41 +145,57 @@ struct CliArgs {
 // Main (Tokio) Entry Point
 ////////////////////////////////////////////////////////////////////////////////
 
-# [tokio::main]
-
+#[tokio::main]
 async fn main() -> Result<()> {
-    // Parse CLI arguments (if needed)
+    // 1) Parse CLI arguments
     let args = CliArgs::parse();
     if args.verbose {
         print!("Verbose mode enabled...{}", LINE_ENDING);
     }
 
-    // Enable raw mode for TUI and construct a CrosstermBackend
+    // 2) Enable raw mode, create Terminal
     enable_raw_mode()?;
-    let mut stdout = io::stdout();
-    execute!(stdout, EnableMouseCapture)?; // Optional: capture mouse events
-    let backend = CrosstermBackend::new(stdout);
-    let mut terminal = Terminal::new(backend)?;
-
-    // Clear the screen and display a welcome message
+    let mut terminal = setup_terminal()?;
     clear_screen(&mut terminal)?;
-    print_welcome_message(&mut terminal)?;
 
-    // Example direct usage of LINE_ENDING:
-    print!("CLI started successfully!{}", LINE_ENDING);
+    // 3) Draw the TUI “Welcome” screen (banner + lines)
+    draw_welcome_screen(&mut terminal)?;
+    disable_raw_mode()?; // turn off raw mode so user can type normally
 
-    // ----------------------------------
-    // Application Logic Goes Here
-    // ----------------------------------
-    // TODO: Add your asynchronous workflow, user input, etc.
+    // 4) If user didn’t pass an input argument, prompt them for a name
+    let name = match args.input {
+        Some(val) => val,
+        None => {
+            // The TUI is still visible, but we’re in normal mode. Type below the TUI lines:
+            let mut input = String::new();
+            io::stdin().read_line(&mut input)?;
+            let trimmed = input.trim().to_string();
+            if trimmed.is_empty() {
+                "Stranger".to_string()
+            } else {
+                trimmed
+            }
+        }
+    };
 
-    // Before exiting, restore the terminal to normal mode and optionally clear
+    // 5) Re‐enable raw mode to show the final TUI greeting
+    enable_raw_mode()?;
+    let mut terminal = setup_terminal()?;
+    clear_screen(&mut terminal)?;
+    draw_greeting(&mut terminal, &name)?;
+
+    // 6) Before exiting, disable raw mode so user can press Enter, then exit
     disable_raw_mode()?;
-    // Force a final clear if desired:
-    crossterm::execute!(
+    print!("Press Enter to exit...{}", LINE_ENDING);
+    io::stdout().flush()?;
+    let mut exit_buf = String::new();
+    io::stdin().read_line(&mut exit_buf)?;
+
+    // 7) Final cleanup: clear screen, print goodbye
+    execute!(
         terminal.backend_mut(),
-        crossterm::terminal::Clear(crossterm::terminal::ClearType::All),
-        crossterm::cursor::MoveTo(0, 0)
+        Clear(ClearType::All),
+        MoveTo(0, 0)
     )?;
     print!("Goodbye!{}", LINE_ENDING);
 
@@ -191,35 +203,152 @@ async fn main() -> Result<()> {
 }
 
 ////////////////////////////////////////////////////////////////////////////////
-// Utility Functions
+// Utility: Setup Terminal
 ////////////////////////////////////////////////////////////////////////////////
 
-/// Clears the terminal screen for a clean start using tui.
+fn setup_terminal() -> Result<Terminal<CrosstermBackend<std::io::Stdout>>> {
+    let backend = CrosstermBackend::new(io::stdout());
+    let terminal = Terminal::new(backend)?;
+    Ok(terminal)
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// Utility: Clears the terminal screen
+////////////////////////////////////////////////////////////////////////////////
+
 fn clear_screen(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>) -> Result<()> {
     terminal.clear()?;
     Ok(())
 }
 
-/// Prints a simple welcome message at the top using tui widgets.
-fn print_welcome_message(
-    terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>,
-) -> Result<()> {
-    let welcome_text = "Welcome to the [app-name]!";
+////////////////////////////////////////////////////////////////////////////////
+// Utility: Draw the “Welcome” TUI
+////////////////////////////////////////////////////////////////////////////////
+
+fn draw_welcome_screen(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>) -> Result<()> {
+    // Banner ASCII – adjust if you want your own style
+    let banner_text = r#"
+   _   _      _ _         __        __         _     _
+  | | | | ___| | | ___     \ \      / /__  _ __| | __| |
+  | |_| |/ _ \ | |/ _ \     \ \ /\ / / _ \| '__| |/ _` |
+  |  _  |  __/ | | (_) |     \ V  V / (_) | |  | | (_| |
+  |_| |_|\___|_|_|\___/       \_/\_/ \___/|_|  |_|\__,_|
+"#;
+
     terminal.draw(|frame| {
         let size = frame.size();
 
-        // Example layout to position the welcome message at the top
-        let chunks = Layout::default()
+        // layout:
+        // chunk[0]: banner
+        // chunk[1]: blank line
+        // chunk[2]: "Welcome..."
+        // chunk[3]: blank line
+        // chunk[4]: "Please enter your name:"
+        // chunk[5]: blank line
+        // chunk[6]: prompt ">"
+        let layout = Layout::default()
             .direction(Direction::Vertical)
             .margin(1)
-            .constraints([Constraint::Length(3), Constraint::Min(0)].as_ref())
+            .constraints([
+                Constraint::Length(6), // banner height
+                Constraint::Length(1),
+                Constraint::Length(1),
+                Constraint::Length(1),
+                Constraint::Length(1),
+                Constraint::Length(1),
+                Constraint::Length(1),
+            ])
             .split(size);
 
-        let paragraph = Paragraph::new(welcome_text)
-            .block(Block::default().borders(Borders::NONE))
-            .style(Style::default().fg(Color::Cyan));
+        // chunk[0] – banner
+        let banner_lines = banner_text
+            .lines()
+            .map(|line| Spans::from(Span::styled(
+                line,
+                Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+            )))
+            .collect::<Vec<_>>();
 
-        frame.render_widget(paragraph, chunks[0]);
+        let banner_paragraph = Paragraph::new(banner_lines)
+            .alignment(Alignment::Left)
+            .block(Block::default().borders(Borders::NONE));
+        frame.render_widget(banner_paragraph, layout[0]);
+
+        // chunk[1]: blank line
+        let blank_par = Paragraph::new("").block(Block::default());
+        frame.render_widget(blank_par, layout[1]);
+
+        // chunk[2]: "Welcome to Hello World"
+        let welcome_par = Paragraph::new("Welcome to Hello World CLI!")
+            .alignment(Alignment::Left)
+            .block(Block::default().borders(Borders::NONE));
+        frame.render_widget(welcome_par, layout[2]);
+
+        // chunk[3]: blank line
+        let blank_par = Paragraph::new("").block(Block::default());
+        frame.render_widget(blank_par, layout[3]);
+
+        // chunk[4]: "Please enter your name:"
+        let prompt_line = Paragraph::new("Please enter your name:")
+            .alignment(Alignment::Left)
+            .block(Block::default().borders(Borders::NONE));
+        frame.render_widget(prompt_line, layout[4]);
+
+        // chunk[5]: blank line
+        let blank_par = Paragraph::new("").block(Block::default());
+        frame.render_widget(blank_par, layout[5]);
+
+        // chunk[6]: ">"
+        let arrow_par = Paragraph::new(">")
+            .alignment(Alignment::Left)
+            .block(Block::default().borders(Borders::NONE));
+        frame.render_widget(arrow_par, layout[6]);
+    })?;
+
+    Ok(())
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// Utility: Show greeting with TUI
+////////////////////////////////////////////////////////////////////////////////
+
+fn draw_greeting(
+    terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>,
+    name: &str,
+) -> Result<()> {
+    terminal.draw(|frame| {
+        let size = frame.size();
+
+        let layout = Layout::default()
+            .direction(Direction::Vertical)
+            .margin(1)
+            .constraints([Constraint::Percentage(100)])
+            .split(size);
+
+        let lines = vec![
+            Spans::from(Span::styled(
+                format!("Hello, {name}!"),
+                Style::default().fg(Color::Green).add_modifier(Modifier::BOLD),
+            )),
+            Spans::from(""),
+            Spans::from(Span::styled(
+                "This is a simple Hello World TUI.",
+                Style::default().fg(Color::Yellow),
+            )),
+            Spans::from(""),
+            Spans::from(Span::styled(
+                "Press Enter to exit.",
+                Style::default().fg(Color::Blue),
+            )),
+            Spans::from(""),
+        ];
+
+        let block = Block::default().borders(Borders::ALL).title("Greetings!");
+        let paragraph = Paragraph::new(lines)
+            .alignment(Alignment::Left)
+            .block(block);
+
+        frame.render_widget(paragraph, layout[0]);
     })?;
 
     Ok(())
@@ -248,5 +377,6 @@ fn print_welcome_message(
 - **Adhere** to the advanced knowledge and best practices laid out above.
 - When creating **CLI applications**, **always** use **Tokio** + **tui** (with crossterm) + **Clap**, ensure **cross-platform line endings** via `LINE_ENDING`, and apply robust error handling.
 - **Always** begin your Rust CLI apps by clearing the screen, printing a welcome banner (via a `Paragraph` in tui-rs), and greeting the user as shown in the template above.
+- Never enable MouseCapture in the application unless the user specifically requests for mouse features in the app you are creating
 - Provide thorough yet concise explanations, referencing modern Rust features, while ensuring all code compiles cleanly on a standard toolchain.
 - Combine **safety**, **concurrency**, and **performance** in every design; adapt your depth of explanation to the user’s skill level, but remain at the forefront of Rust’s state-of-the-art implementations.
