@@ -1,5 +1,5 @@
 ////////////////////////////////////////////////////////////////////////////////
-// reminders-cli - A Ratatui-based TUI for managing reminders
+// reminders-cli - A Ratatui-based TUI for managing reminders (no verbose option)
 ////////////////////////////////////////////////////////////////////////////////
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -8,7 +8,7 @@
 
 use std::{
     fs::{File, OpenOptions},
-    io::{self, BufRead, BufReader, BufWriter, Write},
+    io::{self, BufReader, BufWriter, Write},
     path::PathBuf,
     time::Duration,
 };
@@ -20,19 +20,21 @@ use crossterm::{
     cursor::MoveTo,
     event::{self, Event, KeyCode},
     execute,
-    terminal::{disable_raw_mode, enable_raw_mode, Clear, ClearType, EnterAlternateScreen, LeaveAlternateScreen},
+    terminal::{
+        disable_raw_mode, enable_raw_mode, Clear, ClearType, EnterAlternateScreen,
+        LeaveAlternateScreen,
+    },
 };
 use dirs::home_dir;
-use serde::{Deserialize, Serialize};
-
 use ratatui::{
     backend::CrosstermBackend,
-    layout::{Constraint, Direction, Layout},
+    layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, List, ListItem, Paragraph},
     Frame, Terminal,
 };
+use serde::{Deserialize, Serialize};
 
 ////////////////////////////////////////////////////////////////////////////////
 // Cross-Platform Line Endings
@@ -51,9 +53,7 @@ const LINE_ENDING: &str = "\n";
 #[derive(Parser, Debug)]
 #[command(author, version, about = "Reminders CLI - Ratatui Edition", long_about = None)]
 struct CliArgs {
-    /// Enable verbose output
-    #[arg(long, short)]
-    verbose: bool,
+    // Here, we've removed the verbose option entirely.
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -74,6 +74,7 @@ struct Reminder {
 // RAII Guard for Raw Mode
 ////////////////////////////////////////////////////////////////////////////////
 
+/// Ensures we disable raw mode when the guard is dropped.
 struct RawModeGuard {
     active: bool,
 }
@@ -99,11 +100,10 @@ impl Drop for RawModeGuard {
 
 struct App {
     reminders: Vec<Reminder>,
-    status_message: String, // A status line to display feedback
-    cursor_idx: usize,      // Which reminder is selected
-    input_mode: InputMode,  // Are we adding a new reminder or in normal mode?
-    input_buffer: String,   // Stores user input for new reminder
-    verbose: bool,
+    status_message: String,
+    cursor_idx: usize,
+    input_mode: InputMode,
+    input_buffer: String,
 }
 
 #[derive(PartialEq)]
@@ -114,7 +114,7 @@ enum InputMode {
 }
 
 impl App {
-    fn new(verbose: bool) -> Result<Self> {
+    fn new() -> Result<Self> {
         let reminders = load_reminders()?;
         Ok(Self {
             reminders,
@@ -122,7 +122,6 @@ impl App {
             cursor_idx: 0,
             input_mode: InputMode::Normal,
             input_buffer: String::new(),
-            verbose,
         })
     }
 
@@ -137,7 +136,7 @@ impl App {
     }
 
     fn move_cursor_down(&mut self) {
-        if self.cursor_idx + 1 < self.reminders.len() {
+        if !self.reminders.is_empty() && self.cursor_idx + 1 < self.reminders.len() {
             self.cursor_idx += 1;
         }
     }
@@ -181,6 +180,7 @@ impl App {
         }
         let removed_id = self.reminders[self.cursor_idx].id;
         self.reminders.remove(self.cursor_idx);
+
         if self.cursor_idx >= self.reminders.len() && !self.reminders.is_empty() {
             self.cursor_idx = self.reminders.len() - 1;
         }
@@ -206,13 +206,10 @@ impl App {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    // 1) Parse CLI arguments
-    let args = CliArgs::parse();
-    if args.verbose {
-        print!("Verbose mode enabled...{}", LINE_ENDING);
-    }
+    // 1) Parse CLI arguments (no verbose option)
+    let _args = CliArgs::parse();
 
-    // 2) Enable raw mode via RAII guard
+    // 2) Enable raw mode (RAII guard)
     let _raw_guard = RawModeGuard::new().context("Failed to enable raw mode")?;
 
     // 3) Create Terminal & clear screen (enter alt screen)
@@ -222,36 +219,50 @@ async fn main() -> Result<()> {
     // 4) Draw the welcome TUI
     draw_welcome_screen(&mut terminal)?;
 
-    // 5) Temporarily drop raw mode to prompt for name
+    // 5) Temporarily drop raw mode (allow user to see the welcome)
     drop(_raw_guard);
-    greet_user_cli()?;
 
-    // 6) Re-enable raw mode to run the main TUI loop
+    // Wait for user to press Enter to continue
+    println!("{}", LINE_ENDING); // Extra blank line
+    println!("Press Enter to continue...{}", LINE_ENDING);
+    io::stdout().flush()?;
+    let mut dummy = String::new();
+    io::stdin().read_line(&mut dummy)?;
+
+    // 6) Re-enable raw mode for the main TUI
     let _raw_guard = RawModeGuard::new().context("Failed to re-enable raw mode")?;
     let mut terminal = setup_terminal().context("Failed to create terminal")?;
     clear_screen(&mut terminal)?;
 
     // Create the app state
-    let mut app = App::new(args.verbose)?;
+    let mut app = App::new()?;
 
     // 7) Run TUI event loop
     if let Err(e) = run_app(&mut terminal, &mut app) {
-        disable_raw_mode()?; // explicitly exit raw mode on error
+        // Be sure to exit raw mode on error
+        disable_raw_mode()?;
         eprintln!("Application error: {e}");
     }
 
     // 8) Drop raw mode so user can press Enter to exit
     drop(_raw_guard);
 
+    // Print an extra blank line
     println!("{}", LINE_ENDING);
     println!("{}", LINE_ENDING);
+
     print!("Press Enter to exit...{}", LINE_ENDING);
     io::stdout().flush()?;
     let mut exit_buf = String::new();
     io::stdin().read_line(&mut exit_buf)?;
 
-    // 9) Cleanup: clear screen & say goodbye
-    execute!(terminal.backend_mut(), Clear(ClearType::All), MoveTo(0, 0))?;
+    // 9) Cleanup: properly leave alt screen, clear, and say goodbye
+    execute!(
+        terminal.backend_mut(),
+        LeaveAlternateScreen,
+        Clear(ClearType::All),
+        MoveTo(0, 0)
+    )?;
     print!("Goodbye!{}", LINE_ENDING);
 
     Ok(())
@@ -263,9 +274,10 @@ async fn main() -> Result<()> {
 
 fn setup_terminal() -> Result<Terminal<CrosstermBackend<std::io::Stdout>>> {
     let mut stdout = io::stdout();
-    execute!(stdout, EnterAlternateScreen)?;
+    // Enter the alternate screen for a clean TUI
+    execute!(stdout, EnterAlternateScreen).context("Unable to enter alternate screen")?;
     let backend = CrosstermBackend::new(stdout);
-    let terminal = Terminal::new(backend)?;
+    let terminal = Terminal::new(backend).context("Failed to initialize Terminal")?;
     Ok(terminal)
 }
 
@@ -275,80 +287,120 @@ fn clear_screen(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>) -> R
 }
 
 ////////////////////////////////////////////////////////////////////////////////
-// Draw a small "Welcome" TUI (banner area + minimal text)
+// Draw a small "Welcome" TUI (banner + help instructions, centered)
 ////////////////////////////////////////////////////////////////////////////////
 
 fn draw_welcome_screen(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>) -> Result<()> {
     terminal.draw(|frame| {
         let size = frame.area();
 
-        // Simple banner
-        let banner_lines = vec![
-            Line::from(Span::styled(
-                "Reminders CLI",
-                Style::default().fg(Color::Green).add_modifier(Modifier::BOLD),
-            )),
+        // Layout: top banner + main body
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Length(5), Constraint::Min(0)].as_ref())
+            .split(size);
+
+        // Banner
+        draw_banner(frame, chunks[0]);
+
+        // The main area, centered
+        let main_area = centered_rect(60, 40, chunks[1]);
+
+        let lines = vec![
+            Line::from("Welcome to Reminders CLI!"),
+            Line::from("Manage your tasks effortlessly."),
             Line::from(""),
-            Line::from(Span::styled(
-                "Manage your tasks effortlessly!",
-                Style::default().fg(Color::Yellow),
-            )),
+            Line::from("Press Enter to begin..."),
         ];
-        let paragraph = Paragraph::new(banner_lines)
-            .block(Block::default().borders(Borders::ALL).title(" Welcome "));
 
-        frame.render_widget(paragraph, size);
+        let paragraph = Paragraph::new(lines).alignment(Alignment::Center).block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(" Quick Start ")
+                .border_style(
+                    Style::default()
+                        .fg(Color::Blue)
+                        .add_modifier(Modifier::BOLD),
+                ),
+        );
+
+        frame.render_widget(paragraph, main_area);
     })?;
-
     Ok(())
 }
 
 ////////////////////////////////////////////////////////////////////////////////
-// Prompt for user's name outside of raw mode
+// Draw a top banner
 ////////////////////////////////////////////////////////////////////////////////
 
-fn greet_user_cli() -> Result<()> {
-    disable_raw_mode()?; // Just to be sure
-    println!("{}", LINE_ENDING);
-    println!("Please enter your name:{}", LINE_ENDING);
-    print!("> ");
-    io::stdout().flush()?;
+fn draw_banner(frame: &mut Frame<'_>, area: Rect) {
+    let line1 = Line::from(Span::styled(
+        "REMINDERS CLI",
+        Style::default()
+            .fg(Color::Green)
+            .add_modifier(Modifier::BOLD),
+    ));
+    let line2 = Line::from("A Ratatui-based TUI for your reminders");
 
-    let mut name = String::new();
-    io::stdin().read_line(&mut name)?;
-    let trimmed = name.trim();
+    let paragraph = Paragraph::new(vec![line1, line2])
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(" Welcome ")
+                .border_style(Style::default().fg(Color::Green)),
+        )
+        .alignment(Alignment::Center);
 
-    println!(
-        "{}Hello, {}! Press Enter to continue...{}",
-        LINE_ENDING,
-        if trimmed.is_empty() { "Friend" } else { trimmed },
-        LINE_ENDING
-    );
-    io::stdout().flush()?;
+    frame.render_widget(paragraph, area);
+}
 
-    let mut dummy = String::new();
-    io::stdin().read_line(&mut dummy)?;
-    Ok(())
+////////////////////////////////////////////////////////////////////////////////
+// Center a rectangular area within the given `Rect`
+////////////////////////////////////////////////////////////////////////////////
+
+fn centered_rect(percent_x: u16, percent_y: u16, area: Rect) -> Rect {
+    let layout = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints(
+            [
+                Constraint::Percentage((100 - percent_y) / 2),
+                Constraint::Percentage(percent_y),
+                Constraint::Percentage((100 - percent_y) / 2),
+            ]
+            .as_ref(),
+        )
+        .split(area);
+
+    let middle = layout[1];
+    let box_width = middle.width * percent_x / 100;
+    let x_offset = middle.x + (middle.width.saturating_sub(box_width)) / 2;
+
+    Rect {
+        x: x_offset,
+        y: middle.y,
+        width: box_width,
+        height: middle.height,
+    }
 }
 
 ////////////////////////////////////////////////////////////////////////////////
 // TUI Event Loop
 ////////////////////////////////////////////////////////////////////////////////
 
-fn run_app<B: ratatui::backend::Backend>(
-    terminal: &mut Terminal<B>,
+fn run_app(
+    terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>,
     app: &mut App,
 ) -> Result<()> {
     loop {
         // Sort reminders by (completed, due)
         app.reminders
-            .sort_by_key(|r| (r.completed, r.due.map(|dt| dt.timestamp())));
+            .sort_unstable_by_key(|r| (r.completed, r.due.map(|dt| dt.timestamp())));
 
         // Draw the UI
         terminal.draw(|frame| draw_main_ui(frame, app))?;
 
         // Poll for events
-        if crossterm::event::poll(Duration::from_millis(200))? {
+        if crossterm::event::poll(Duration::from_millis(250))? {
             if let Event::Key(key) = event::read()? {
                 match app.input_mode {
                     InputMode::Normal => match key.code {
@@ -394,10 +446,11 @@ fn run_app<B: ratatui::backend::Backend>(
                                 app.input_mode = InputMode::Normal;
                             } else {
                                 app.set_status(format!(
-                                    "Got title: '{}'. Now enter optional due date (YYYY-mm-dd HH:MM). Press Enter to skip.",
+                                    "Got title: '{}'. Now enter optional due date \
+                                     (YYYY-mm-dd HH:MM). Press Enter to skip.",
                                     t
                                 ));
-                                // Re-use input_buffer for the title
+                                // Temporarily store user’s title
                                 app.input_buffer = t;
                                 app.input_mode = InputMode::AddDue;
                             }
@@ -417,18 +470,17 @@ fn run_app<B: ratatui::backend::Backend>(
                     },
                     InputMode::AddDue => match key.code {
                         KeyCode::Enter => {
-                            // Try parse date
+                            // Attempt parse date
                             let title = app.input_buffer.clone();
                             app.input_mode = InputMode::Normal;
                             app.input_buffer.clear();
                             match parse_datetime(&title) {
                                 Ok(parsed_dt) => {
-                                    // If user input is actually a date, treat the entire buffer as a date
-                                    // In a more advanced approach, you'd store the title + date separately
+                                    // Valid date/time
                                     app.add_reminder(&title, Some(parsed_dt))?;
                                 }
                                 Err(_) => {
-                                    // If parse fails, treat it as a title-only
+                                    // No valid date
                                     app.add_reminder(&title, None)?;
                                 }
                             }
@@ -456,7 +508,7 @@ fn run_app<B: ratatui::backend::Backend>(
 // Main UI Drawing
 ////////////////////////////////////////////////////////////////////////////////
 
-fn draw_main_ui<B: ratatui::backend::Backend>(frame: &mut Frame<B>, app: &App) {
+fn draw_main_ui(frame: &mut Frame<'_>, app: &App) {
     // Split screen into banner, main list, status bar
     let chunks = Layout::default()
         .direction(Direction::Vertical)
@@ -468,11 +520,12 @@ fn draw_main_ui<B: ratatui::backend::Backend>(frame: &mut Frame<B>, app: &App) {
         .split(frame.area());
 
     // Banner
-    let banner = Paragraph::new(Line::from(Span::styled(
+    let banner_text = Line::from(Span::styled(
         "Reminders CLI - [j/k: navigate] [a: add] [d: done] [r: remove] [c: clear] [q: quit]",
         Style::default().fg(Color::Cyan),
-    )))
-    .block(Block::default().borders(Borders::ALL).title(" Banner "));
+    ));
+    let banner =
+        Paragraph::new(banner_text).block(Block::default().borders(Borders::ALL).title(" Banner "));
     frame.render_widget(banner, chunks[0]);
 
     // Reminders list
@@ -500,8 +553,8 @@ fn draw_main_ui<B: ratatui::backend::Backend>(frame: &mut Frame<B>, app: &App) {
         })
         .collect();
 
-    let reminders_list = List::new(items)
-        .block(Block::default().borders(Borders::ALL).title(" Reminders "));
+    let reminders_list =
+        List::new(items).block(Block::default().borders(Borders::ALL).title(" Reminders "));
     frame.render_widget(reminders_list, chunks[1]);
 
     // Status bar
@@ -533,8 +586,8 @@ fn load_reminders() -> Result<Vec<Reminder>> {
     if !file_path.exists() {
         return Ok(Vec::new());
     }
-    let file = File::open(&file_path)
-        .with_context(|| format!("Unable to open file {:?}", file_path))?;
+    let file =
+        File::open(&file_path).with_context(|| format!("Unable to open file {:?}", file_path))?;
     let reader = BufReader::new(file);
     let reminders: Vec<Reminder> =
         serde_json::from_reader(reader).with_context(|| "Failed to parse JSON")?;

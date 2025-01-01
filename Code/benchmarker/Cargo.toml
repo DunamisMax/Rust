@@ -1,0 +1,37 @@
+# Cargo.toml
+[package]
+name = "benchmarker"
+version = "0.1.0"
+edition = "2021"
+description = "A multi-component benchmarker with ratatui for TUI."
+license = "MIT"
+repository = "https://github.com/Rust"
+readme = "README.md"
+homepage = "https://github.com/Rust"
+documentation = "https://github.com/dunamismax/Rust/Code/benchmarker"
+
+[dependencies]
+# Async runtime
+tokio = { version = "*", features = ["full"] }
+
+# TUI + Terminal handling
+ratatui = "*"
+crossterm = "*"
+
+# Argument parsing
+clap = { version = "*", features = ["derive"] }
+
+# Error handling
+anyhow = "*"
+
+# For system info, if desired (optional but used here)
+num_cpus = "*"
+page_size = "*"
+
+# For memory allocations
+rand = "*"
+
+[profile.release]
+opt-level = 3
+debug = false
+lto = true

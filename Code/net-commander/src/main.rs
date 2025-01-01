@@ -97,11 +97,18 @@ async fn main() -> Result<()> {
     let mut terminal = setup_terminal().context("Failed to create terminal")?;
     clear_screen(&mut terminal)?;
 
-    // 4) Draw the welcome banner TUI
+    // 4) Draw the welcome TUI (banner) using Ratatui
     draw_welcome_banner(&mut terminal)?;
 
-    // 5) Draw an initial "app loaded" message at the bottom
-    print!("CLI started successfully!{}", LINE_ENDING);
+    // 5) Temporarily drop raw mode to print a quick message and extra spacing
+    drop(_raw_guard);
+    println!("{}", LINE_ENDING); // Extra blank line
+    println!("{}", LINE_ENDING); // Another blank line
+
+    println!(" CLI started successfully!{}", LINE_ENDING);
+
+    // Re-enable raw mode for the main menu
+    let _raw_guard = RawModeGuard::new().context("Failed to re-enable raw mode")?;
 
     // 6) Run the main TUI loop
     if let Err(e) = run_main_menu(&mut terminal).await {
@@ -111,8 +118,17 @@ async fn main() -> Result<()> {
     // 7) Drop raw mode guard, clearing the terminal upon exit
     drop(_raw_guard);
     execute!(terminal.backend_mut(), Clear(ClearType::All), MoveTo(0, 0))?;
-    print!("Goodbye!{}", LINE_ENDING);
 
+    // 8) Provide a final "Press Enter to exit..." prompt
+    println!("{}", LINE_ENDING); // Extra blank line
+    println!("{}", LINE_ENDING); // Another blank line
+
+    print!("Press Enter to exit...{}", LINE_ENDING);
+    io::stdout().flush()?;
+    let mut exit_buf = String::new();
+    io::stdin().read_line(&mut exit_buf)?;
+
+    print!("Goodbye!{}", LINE_ENDING);
     Ok(())
 }
 
@@ -132,14 +148,14 @@ fn clear_screen(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>) -> R
 }
 
 ////////////////////////////////////////////////////////////////////////////////
-// Draw the Welcome Banner
+// Draw the Welcome Banner (Ratatui-based)
 ////////////////////////////////////////////////////////////////////////////////
 
 fn draw_welcome_banner(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>) -> Result<()> {
     terminal.draw(|frame| {
         let size = frame.area();
 
-        // We draw a simple banner at the top
+        // We draw a simple banner at the top, centered
         let banner_rect = centered_rect(80, 20, size);
 
         let line1 = Line::from(Span::styled(
@@ -265,8 +281,9 @@ async fn run_main_menu(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>
 
         // Poll for key events
         if crossterm::event::poll(Duration::from_millis(150))? {
-            match event::read()? {
-                CEvent::Key(key_event) => match key_event.code {
+            // Use `if let` to avoid the single-match warning
+            if let CEvent::Key(key_event) = event::read()? {
+                match key_event.code {
                     KeyCode::Up => {
                         app.up();
                     }
@@ -298,8 +315,7 @@ async fn run_main_menu(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>
                         return Ok(());
                     }
                     _ => {}
-                },
-                _ => {}
+                }
             }
         }
     }
@@ -754,7 +770,7 @@ async fn traceroute_menu() {
         return;
     }
 
-    print!("Performing traceroute to {host} ...{LINE_ENDING}");
+    print!("Performing traceroute to {host} ...{}", LINE_ENDING);
     if cfg!(target_os = "windows") {
         let output = Command::new("tracert").arg(host.clone()).output();
         match output {

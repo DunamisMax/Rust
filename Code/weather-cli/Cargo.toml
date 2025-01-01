@@ -26,9 +26,6 @@ tokio = { version = "*", features = ["full"] }
 ratatui = "*"
 crossterm = "*"
 
-# Only keep "rand" if you're actually using it
-rand = "*"
-
 [profile.release]
 opt-level = 3
 debug = false

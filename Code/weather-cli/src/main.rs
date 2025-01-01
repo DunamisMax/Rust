@@ -22,13 +22,14 @@ use crossterm::{
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, Clear, ClearType},
 };
+
 use ratatui::{
     backend::CrosstermBackend,
-    layout::{Alignment, Constraint, Direction, Layout},
+    layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Paragraph},
-    Terminal,
+    widgets::{Block, Borders, ListItem, Paragraph},
+    Frame, Terminal,
 };
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -56,7 +57,7 @@ struct Cli {
     #[arg(short, long, default_value = "us")]
     country: String,
 
-    /// Units of measurement: "metric" (Celsius), "imperial" (Fahrenheit), or "standard" (Kelvin)
+    /// Units of measurement: "metric", "imperial", or "standard"
     #[arg(short, long, default_value = "imperial")]
     units: String,
 }
@@ -123,8 +124,7 @@ async fn main() -> Result<()> {
     let api_key = env::var("OWM_API_KEY")
         .context("Environment variable OWM_API_KEY not set. Please set it or store it in .env.")?;
 
-    // 1) Enable raw mode automatically via RAII guard.
-    //    Once the guard is dropped (goes out of scope), raw mode is disabled.
+    // 1) Enable raw mode automatically via RAII guard
     let _raw_guard = RawModeGuard::new().context("Failed to enable raw mode")?;
 
     // 2) Create Ratatui Terminal and clear screen
@@ -137,16 +137,23 @@ async fn main() -> Result<()> {
     // 4) Temporarily drop raw mode to allow normal keyboard input
     drop(_raw_guard);
 
+    // Extra blank lines for a neat console prompt (below the TUI)
+    println!("{}", LINE_ENDING);
+    println!("{}", LINE_ENDING);
+
     // 5) If user didn’t pass an input argument, prompt them for a location
     let location = match args.location {
         Some(loc) => loc,
         None => {
-            // The Ratatui screen is still visible, but we’re in normal mode.
-            // Type below the TUI lines:
+            print!("Enter a city name or ZIP code: {}", LINE_ENDING);
+            print!("> ");
+            io::stdout().flush()?;
+
             let mut input = String::new();
             io::stdin().read_line(&mut input)?;
             let trimmed = input.trim().to_string();
             if trimmed.is_empty() {
+                // Default to London if blank
                 "London".to_string()
             } else {
                 trimmed
@@ -172,8 +179,10 @@ async fn main() -> Result<()> {
     // 9) Disable raw mode so user can press Enter, then exit
     drop(_raw_guard);
 
-    print!("   Press Enter to exit...{}", LINE_ENDING);
+    println!("{}", LINE_ENDING); // Extra blank line
+    print!("Press Enter to exit...{}", LINE_ENDING);
     io::stdout().flush()?;
+
     let mut exit_buf = String::new();
     io::stdin().read_line(&mut exit_buf)?;
 
@@ -208,7 +217,7 @@ impl Drop for RawModeGuard {
 }
 
 ////////////////////////////////////////////////////////////////////////////////
-// Utility: Setup Terminal
+// Setup & Clear Terminal
 ////////////////////////////////////////////////////////////////////////////////
 
 fn setup_terminal() -> Result<Terminal<CrosstermBackend<std::io::Stdout>>> {
@@ -217,104 +226,112 @@ fn setup_terminal() -> Result<Terminal<CrosstermBackend<std::io::Stdout>>> {
     Ok(terminal)
 }
 
-////////////////////////////////////////////////////////////////////////////////
-// Utility: Clears the terminal screen
-////////////////////////////////////////////////////////////////////////////////
-
 fn clear_screen(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>) -> Result<()> {
     terminal.clear()?;
     Ok(())
 }
 
 ////////////////////////////////////////////////////////////////////////////////
-// Utility: Show the “Welcome” Ratatui with ASCII Banner
+// Draw a "Welcome" TUI (top banner + steps box, centered)
 ////////////////////////////////////////////////////////////////////////////////
 
 fn draw_welcome_screen(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>) -> Result<()> {
-    // You can replace this static ASCII art with figlet-rs output if preferred
-    let banner_text = r#"
-                         _____ ______                               ___________
-___      _______ ______ ___  /____  /_ _____ ________        __________  /___(_)
-__ | /| / /_  _ \_  __ `/_  __/__  __ \_  _ \__  ___/_________  ___/__  / __  /
-__ |/ |/ / /  __// /_/ / / /_  _  / / //  __/_  /    _/_____// /__  _  /  _  /
-____/|__/  \___/ \__,_/  \__/  /_/ /_/ \___/ /_/             \___/  /_/   /_/
-"#;
-
     terminal.draw(|frame| {
-        // NOTE: frame.area() instead of frame.size()
-        let screen = frame.area();
+        let size = frame.area();
 
-        let vertical_chunks = Layout::default()
+        // Layout:
+        // - Top banner area: length 5
+        // - Remainder for the main body
+        let chunks = Layout::default()
             .direction(Direction::Vertical)
-            .margin(1)
-            .constraints([
-                Constraint::Length(8), // ASCII banner
-                Constraint::Length(1), // blank line
-                Constraint::Length(1), // "Welcome to the Weather CLI!"
-                Constraint::Length(1), // blank line
-                Constraint::Length(2), // instructions
-                Constraint::Length(1), // blank line
-                Constraint::Length(1), // prompt arrow
-            ])
-            .split(screen);
+            .constraints([Constraint::Length(5), Constraint::Min(0)].as_ref())
+            .split(size);
 
-        // chunk[0]: ASCII Banner
-        let banner_lines: Vec<Line> = banner_text
-            .lines()
-            .map(|line| {
-                Line::from(Span::styled(
-                    line,
-                    Style::default()
-                        .fg(Color::Cyan)
-                        .add_modifier(Modifier::BOLD),
-                ))
-            })
-            .collect();
-        let banner_paragraph = Paragraph::new(banner_lines)
-            .block(Block::default())
-            .alignment(Alignment::Left);
-        frame.render_widget(banner_paragraph, vertical_chunks[0]);
+        // 1) Banner
+        draw_banner(frame, chunks[0]);
 
-        // chunk[1]: blank line
-        let blank_paragraph = Paragraph::new(Line::from("")).block(Block::default());
-        frame.render_widget(blank_paragraph, vertical_chunks[1]);
+        // 2) Center an instruction box in the remaining space
+        let instructions_area = centered_rect(60, 30, chunks[1]);
 
-        // chunk[2]: "Welcome to the Weather CLI!"
-        let welcome_line = Paragraph::new(Line::from("Welcome to the Weather CLI!"))
-            .alignment(Alignment::Left)
-            .block(Block::default());
-        frame.render_widget(welcome_line, vertical_chunks[2]);
-
-        // chunk[3]: blank line
-        let blank_paragraph = Paragraph::new(Line::from("")).block(Block::default());
-        frame.render_widget(blank_paragraph, vertical_chunks[3]);
-
-        // chunk[4]: instructions
-        let instruction_lines = vec![
-            Line::from("Please enter a ZIP code or city name below:"),
-            Line::from("Example: \"90001\" or \"London\""),
+        let steps = vec![
+            ListItem::new("Enter your city or ZIP code below"),
+            ListItem::new("Use -c or --country if needed"),
+            ListItem::new("Use -u or --units to specify metric/imperial"),
+            ListItem::new("Press Enter to confirm"),
         ];
-        let instruction_p = Paragraph::new(instruction_lines)
-            .alignment(Alignment::Left)
-            .block(Block::default());
-        frame.render_widget(instruction_p, vertical_chunks[4]);
 
-        // chunk[5]: blank line
-        let blank_paragraph = Paragraph::new(Line::from("")).block(Block::default());
-        frame.render_widget(blank_paragraph, vertical_chunks[5]);
+        let steps_list = ratatui::widgets::List::new(steps)
+            .block(
+                Block::default()
+                    .title("Quick Start")
+                    .borders(Borders::ALL)
+                    .border_style(Style::default().fg(Color::Yellow)),
+            )
+            .highlight_symbol(">>");
 
-        // chunk[6]: ">"
-        let arrow_line = Paragraph::new(Line::from(">"))
-            .alignment(Alignment::Left)
-            .block(Block::default());
-        frame.render_widget(arrow_line, vertical_chunks[6]);
+        frame.render_widget(steps_list, instructions_area);
     })?;
 
     Ok(())
 }
 
 ////////////////////////////////////////////////////////////////////////////////
-// Utility: Check if input is numeric (ZIP) or not (city)
+// Draw a top banner
+////////////////////////////////////////////////////////////////////////////////
+
+fn draw_banner(frame: &mut Frame, area: Rect) {
+    let line1 = Line::from(Span::styled(
+        "WEATHER CLI",
+        Style::default()
+            .fg(Color::Magenta)
+            .add_modifier(Modifier::BOLD),
+    ));
+
+    let line2 = Line::from("A minimal TUI demonstration for weather data");
+
+    let paragraph = Paragraph::new(vec![line1, line2])
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(" Welcome ")
+                .border_style(Style::default().fg(Color::Magenta)),
+        )
+        .alignment(Alignment::Center);
+
+    frame.render_widget(paragraph, area);
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// Helper: center a smaller box within a given area
+////////////////////////////////////////////////////////////////////////////////
+
+fn centered_rect(percent_x: u16, percent_y: u16, area: Rect) -> Rect {
+    let layout = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints(
+            [
+                Constraint::Percentage((100 - percent_y) / 2),
+                Constraint::Percentage(percent_y),
+                Constraint::Percentage((100 - percent_y) / 2),
+            ]
+            .as_ref(),
+        )
+        .split(area);
+
+    let middle = layout[1];
+    let box_width = middle.width * percent_x / 100;
+    let x_offset = middle.x + (middle.width.saturating_sub(box_width)) / 2;
+
+    Rect {
+        x: x_offset,
+        y: middle.y,
+        width: box_width,
+        height: middle.height,
+    }
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// Check if input is numeric (ZIP) or not (city)
 ////////////////////////////////////////////////////////////////////////////////
 
 fn is_numeric(s: &str) -> bool {
@@ -322,7 +339,7 @@ fn is_numeric(s: &str) -> bool {
 }
 
 ////////////////////////////////////////////////////////////////////////////////
-// Utility: Fetch weather by city
+// Fetch weather by city
 ////////////////////////////////////////////////////////////////////////////////
 
 async fn fetch_weather_city(
@@ -353,7 +370,7 @@ async fn fetch_weather_city(
 }
 
 ////////////////////////////////////////////////////////////////////////////////
-// Utility: Fetch weather by ZIP
+// Fetch weather by ZIP
 ////////////////////////////////////////////////////////////////////////////////
 
 async fn fetch_weather_zip(
@@ -384,7 +401,7 @@ async fn fetch_weather_zip(
 }
 
 ////////////////////////////////////////////////////////////////////////////////
-// Utility: Draw the weather info TUI
+// Draw the weather info TUI
 ////////////////////////////////////////////////////////////////////////////////
 
 fn draw_weather_info(
@@ -411,6 +428,7 @@ fn draw_weather_info(
             .add_modifier(Modifier::BOLD),
     )));
 
+    // Weather condition
     if let Some(desc) = weather.weather.first() {
         let cond_str = format!("Condition: {} ({})", desc.main, desc.description);
         lines.push(Line::from(Span::styled(
@@ -445,7 +463,6 @@ fn draw_weather_info(
             Style::default().fg(Color::Blue),
         )));
     }
-
     if let Some(p) = weather.main.pressure {
         lines.push(Line::from(Span::styled(
             format!("Pressure: {} hPa", p),
@@ -502,18 +519,15 @@ fn draw_weather_info(
         }
     }
 
-    // A blank line
+    // A blank line for spacing
     lines.push(Line::from(""));
 
     terminal.draw(|frame| {
-        // Use .area() instead of deprecated .size()
         let screen = frame.area();
-
         let block = Block::default().borders(Borders::ALL).title("Weather");
         let paragraph = Paragraph::new(lines)
             .block(block)
             .alignment(Alignment::Left);
-
         frame.render_widget(paragraph, screen);
     })?;
 
@@ -521,7 +535,7 @@ fn draw_weather_info(
 }
 
 ////////////////////////////////////////////////////////////////////////////////
-// Utility: Format timestamps
+// Format timestamps
 ////////////////////////////////////////////////////////////////////////////////
 
 fn format_timestamp(ts: u64) -> String {

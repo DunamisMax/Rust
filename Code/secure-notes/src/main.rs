@@ -26,7 +26,7 @@ use crossterm::{
     terminal::{disable_raw_mode, enable_raw_mode, Clear, ClearType},
 };
 
-// IMPORTANT: In ratatui 0.29, we just import `Frame` (with no generic param)
+// IMPORTANT: In ratatui 0.29, we just import `Frame` (with no extra lifetime param).
 use ratatui::{
     backend::CrosstermBackend,
     layout::{Alignment, Constraint, Direction, Layout, Rect},
@@ -89,6 +89,7 @@ struct Note {
 /// The different TUI screens.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Screen {
+    Welcome,
     PasswordPrompt,
     Menu,
     ViewNotes,
@@ -160,15 +161,12 @@ async fn main() -> Result<()> {
     // 4) Clear the screen
     clear_screen(&mut terminal).context("Failed to clear terminal")?;
 
-    // 5) Print a quick message with cross-platform line ending
-    print!("   CLI started successfully...{}", LINE_ENDING);
-
-    // 6) Build initial App state
+    // 5) Build initial App state
     let app = App {
         password: String::new(),
         key: [0u8; 32],
         notes: Vec::new(),
-        screen: Screen::PasswordPrompt,
+        screen: Screen::Welcome,
         input_buffer: String::new(),
         edit_state: EditState {
             note_id: None,
@@ -178,7 +176,7 @@ async fn main() -> Result<()> {
         file_path: args.file,
     };
 
-    // 7) Launch the main TUI loop
+    // 6) Launch the main TUI loop
     if let Err(e) = run_app(&mut terminal, app) {
         // If the app errored, restore terminal and show the error
         finalize_terminal(&mut terminal)?;
@@ -186,8 +184,19 @@ async fn main() -> Result<()> {
         return Err(e);
     }
 
-    // 8) If everything is OK, finalize
+    // 7) If everything is OK, finalize
     finalize_terminal(&mut terminal)?;
+
+    // 8) Drop raw mode so user can press Enter to exit
+    drop(_raw_guard);
+
+    print!("Press Enter to exit...{}", LINE_ENDING);
+    io::stdout().flush()?;
+    let mut exit_buf = String::new();
+    io::stdin().read_line(&mut exit_buf)?;
+
+    // Final message
+    execute!(io::stdout(), Clear(ClearType::All), MoveTo(0, 0))?;
     print!("Goodbye!{}", LINE_ENDING);
 
     Ok(())
@@ -258,23 +267,23 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>, mut app: 
 ////////////////////////////////////////////////////////////////////////////////
 
 /// The top-level function that draws each screen.
-/// Notice there's **no** `<B: Backend>` or `Frame<'_, B>`—just `Frame`.
 fn draw_ui(frame: &mut Frame, app: &App) {
     let size = frame.area();
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(6), // For the ASCII banner
-            Constraint::Min(0),    // The main screen
-            Constraint::Length(3), // For an optional error/footer
+            Constraint::Length(6), // Banner area
+            Constraint::Min(0),    // Main screen
+            Constraint::Length(3), // Error/footer
         ])
         .split(size);
 
-    // 1) Banner (always displayed)
+    // 1) Banner (always displayed at top)
     draw_banner(frame, chunks[0]);
 
-    // 2) Main screen
+    // 2) Main screen content depends on `app.screen`
     match app.screen {
+        Screen::Welcome => draw_welcome_screen(frame, app, chunks[1]),
         Screen::PasswordPrompt => draw_password_prompt(frame, app, chunks[1]),
         Screen::Menu => draw_main_menu(frame, chunks[1]),
         Screen::ViewNotes => draw_view_notes(frame, app, chunks[1]),
@@ -283,7 +292,7 @@ fn draw_ui(frame: &mut Frame, app: &App) {
             draw_simple_input(frame, app, chunks[1])
         }
         Screen::Exit => {
-            // Nothing
+            // Nothing special to draw
         }
     }
 
@@ -300,21 +309,14 @@ fn draw_ui(frame: &mut Frame, app: &App) {
     }
 }
 
-/// Minimal banner at the top.
+/// Minimal banner at the top (Ratatui-based).
 fn draw_banner(frame: &mut Frame, area: Rect) {
-    // We’ll do a two-line banner:
-    //  1) A colorful “SECURE NOTES”
-    //  2) A short tagline or divider
-
-    // First line: "SECURE NOTES" in bright magenta, bold
     let line1 = Line::from(Span::styled(
         " SECURE NOTES ",
         Style::default()
             .fg(Color::Magenta)
             .add_modifier(Modifier::BOLD),
     ));
-
-    // Second line: could be a simple divider, subtitle, or tagline
     let line2 = Line::from(Span::styled(
         " An Encrypted TUI App ",
         Style::default()
@@ -322,7 +324,6 @@ fn draw_banner(frame: &mut Frame, area: Rect) {
             .add_modifier(Modifier::ITALIC),
     ));
 
-    // Combine lines in a Paragraph
     let paragraph = Paragraph::new(vec![line1, line2])
         .block(Block::default().borders(Borders::ALL).title(" Welcome "))
         .alignment(Alignment::Center)
@@ -331,11 +332,31 @@ fn draw_banner(frame: &mut Frame, area: Rect) {
     frame.render_widget(paragraph, area);
 }
 
+/// A new "welcome" screen that greets the user with instructions.
+fn draw_welcome_screen(frame: &mut Frame, _app: &App, area: Rect) {
+    let block = Block::default()
+        .title("Welcome!")
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::Green));
+
+    let lines = vec![
+        Line::from("Welcome to the Secure Notes TUI Application."),
+        Line::from("Press Enter to continue to password prompt."),
+        Line::from("Press Esc to exit immediately."),
+    ];
+
+    let paragraph = Paragraph::new(lines)
+        .block(block)
+        .alignment(Alignment::Center);
+
+    frame.render_widget(paragraph, area);
+}
+
 fn draw_password_prompt(frame: &mut Frame, app: &App, area: Rect) {
     let block = Block::default()
         .title("Enter Master Password (ENTER=confirm, ESC=exit)")
         .borders(Borders::ALL);
-    // For real usage, you might mask the password with '*'
+    // For real usage, you might mask the password with '*'.
     let paragraph = Paragraph::new(app.input_buffer.as_str())
         .block(block)
         .style(Style::default().fg(Color::Yellow));
@@ -440,6 +461,22 @@ fn draw_simple_input(frame: &mut Frame, app: &App, area: Rect) {
 
 fn handle_key_event(key_event: KeyEvent, app: &mut App) -> Result<()> {
     match app.screen {
+        // --------------------------------------------------------------------
+        // WELCOME Screen
+        // --------------------------------------------------------------------
+        Screen::Welcome => match key_event.code {
+            KeyCode::Enter => {
+                app.screen = Screen::PasswordPrompt;
+            }
+            KeyCode::Esc => {
+                app.screen = Screen::Exit;
+            }
+            _ => {}
+        },
+
+        // --------------------------------------------------------------------
+        // PASSWORD PROMPT
+        // --------------------------------------------------------------------
         Screen::PasswordPrompt => match key_event.code {
             KeyCode::Enter => {
                 // Derive key
@@ -466,6 +503,10 @@ fn handle_key_event(key_event: KeyEvent, app: &mut App) -> Result<()> {
             }
             _ => {}
         },
+
+        // --------------------------------------------------------------------
+        // MAIN MENU
+        // --------------------------------------------------------------------
         Screen::Menu => match key_event.code {
             KeyCode::Char('1') => app.screen = Screen::ViewNotes,
             KeyCode::Char('2') => {
@@ -494,12 +535,20 @@ fn handle_key_event(key_event: KeyEvent, app: &mut App) -> Result<()> {
             KeyCode::Char('7') => app.screen = Screen::Exit,
             _ => {}
         },
+
+        // --------------------------------------------------------------------
+        // VIEW NOTES
+        // --------------------------------------------------------------------
         Screen::ViewNotes => {
             // On Enter/Esc, go back to menu
             if matches!(key_event.code, KeyCode::Enter | KeyCode::Esc) {
                 app.screen = Screen::Menu;
             }
         }
+
+        // --------------------------------------------------------------------
+        // CREATE NOTE
+        // --------------------------------------------------------------------
         Screen::CreateNote => match key_event.code {
             KeyCode::Esc => {
                 // Save
@@ -524,6 +573,10 @@ fn handle_key_event(key_event: KeyEvent, app: &mut App) -> Result<()> {
             }
             _ => {}
         },
+
+        // --------------------------------------------------------------------
+        // EDIT NOTE
+        // --------------------------------------------------------------------
         Screen::EditNote => {
             // If we don't yet have a note_id, we're prompting for it
             if app.edit_state.note_id.is_none() {
@@ -576,6 +629,10 @@ fn handle_key_event(key_event: KeyEvent, app: &mut App) -> Result<()> {
                 }
             }
         }
+
+        // --------------------------------------------------------------------
+        // DELETE NOTE
+        // --------------------------------------------------------------------
         Screen::DeleteNote => match key_event.code {
             KeyCode::Enter => {
                 let id = app.input_buffer.trim();
@@ -600,6 +657,10 @@ fn handle_key_event(key_event: KeyEvent, app: &mut App) -> Result<()> {
             }
             _ => {}
         },
+
+        // --------------------------------------------------------------------
+        // OPEN NOTE
+        // --------------------------------------------------------------------
         Screen::OpenNote => match key_event.code {
             KeyCode::Enter => {
                 let id = app.input_buffer.trim();
@@ -623,6 +684,10 @@ fn handle_key_event(key_event: KeyEvent, app: &mut App) -> Result<()> {
             }
             _ => {}
         },
+
+        // --------------------------------------------------------------------
+        // DELETE ALL
+        // --------------------------------------------------------------------
         Screen::DeleteAll => match key_event.code {
             KeyCode::Enter => {
                 let confirm = app.input_buffer.trim();
@@ -646,6 +711,10 @@ fn handle_key_event(key_event: KeyEvent, app: &mut App) -> Result<()> {
             }
             _ => {}
         },
+
+        // --------------------------------------------------------------------
+        // EXIT
+        // --------------------------------------------------------------------
         Screen::Exit => {}
     }
     Ok(())

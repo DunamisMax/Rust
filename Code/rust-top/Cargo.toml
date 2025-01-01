@@ -4,6 +4,12 @@ version = "0.1.0"
 edition = "2021"
 license = "MIT"
 description = "A TUI-based Task Manager for Linux written in Rust."
+repository = "https://github.com/dunamismax/Rust"
+readme = "README.md"
+homepage = "https://github.com/dunamismax/Rust"
+documentation = "https://github.com/dunamismax/Rust/Code/rust-top"
+keywords = ["tui", "rust", "task-manager"]
+categories = ["command-line-utilities", "text-user-interface"]
 
 [dependencies]
 anyhow = "*"
@@ -13,7 +19,6 @@ ratatui = "*"
 tokio = { version = "*", features = ["full"] }
 
 [profile.release]
-# Typical release profile optimizations
 opt-level = 3
 lto = true
 debug = false

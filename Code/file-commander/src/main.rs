@@ -1,5 +1,5 @@
 ////////////////////////////////////////////////////////////////////////////////
-// File Commander - Rewritten with Ratatui Welcome Screen & Strict Guidelines
+// File Commander - TUI Version w/ Ratatui Welcome Banner
 ////////////////////////////////////////////////////////////////////////////////
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -15,7 +15,6 @@ use crossterm::{
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, Clear, ClearType},
 };
-use rand;
 use ratatui::{
     backend::CrosstermBackend,
     layout::{Alignment, Constraint, Direction, Layout, Rect},
@@ -24,7 +23,6 @@ use ratatui::{
     widgets::{Block, Borders, List, ListItem, Paragraph},
     Frame, Terminal,
 };
-use rayon;
 use std::{
     fs, io,
     io::Write,
@@ -38,6 +36,7 @@ use std::{
 
 #[cfg(windows)]
 const LINE_ENDING: &str = "\r\n";
+
 #[cfg(not(windows))]
 const LINE_ENDING: &str = "\n";
 
@@ -62,7 +61,7 @@ struct CliArgs {
 // RAII Guard for Raw Mode
 ////////////////////////////////////////////////////////////////////////////////
 
-/// Enables raw mode upon creation and disables it when dropped.
+/// Enables raw mode upon creation and disables it automatically upon drop.
 struct RawModeGuard {
     active: bool,
 }
@@ -90,11 +89,11 @@ impl Drop for RawModeGuard {
 struct AppState {
     /// The current working directory
     current_dir: PathBuf,
-    /// The scrolling log that is displayed at the bottom
+    /// The scrolling log displayed at the bottom
     log_lines: Vec<String>,
     /// The index of the currently highlighted menu item
     menu_index: usize,
-    /// The menu items
+    /// The list of menu items
     menu_items: Vec<&'static str>,
 }
 
@@ -142,170 +141,45 @@ async fn main() -> Result<()> {
     clear_screen(&mut terminal)?;
 
     // 4) Draw the welcome TUI
-    draw_welcome_screen(&mut terminal).context("Failed to draw welcome screen")?;
+    draw_welcome_screen(&mut terminal)?;
 
-    // 5) Temporarily drop raw mode to allow optional interactive pause
+    // 5) Temporarily drop raw mode to prompt user to continue
     drop(_raw_guard);
-
-    //    (Optional) Wait for user to press Enter to proceed
-    //    If you don't want a pause, you can remove these lines:
-    println!("{}", LINE_ENDING); // Extra blank lines for spacing
-    println!("{}", LINE_ENDING);
-
-    print!("Press Enter to launch File Commander...{}", LINE_ENDING);
+    println!("{}", LINE_ENDING); // Extra blank line
+    println!("Press Enter to continue...{}", LINE_ENDING);
     io::stdout().flush()?;
-    let mut buf = String::new();
-    io::stdin().read_line(&mut buf)?;
+    let mut dummy = String::new();
+    io::stdin().read_line(&mut dummy)?;
 
-    // 6) Re-enable raw mode for the main TUI loop
+    // 6) Re-enable raw mode
     let _raw_guard = RawModeGuard::new().context("Failed to re-enable raw mode")?;
 
-    // 7) Clear screen and create a fresh Terminal again
-    let mut terminal = setup_terminal().context("Failed to create terminal")?;
+    // 7) Re-create terminal & clear screen for main TUI
+    let mut terminal = setup_terminal().context("Failed to recreate terminal")?;
     clear_screen(&mut terminal)?;
 
-    // 8) Create our AppState
+    // 8) Create our app state
     let mut app_state = AppState::new().context("Failed to initialize AppState")?;
 
-    // 9) Enter the main event loop
-    if let Err(e) = run_app(&mut terminal, &mut app_state) {
-        drop(_raw_guard); // Force raw mode off in case of error
-                          // Clear the screen on exit for cleanliness
-        execute!(terminal.backend_mut(), Clear(ClearType::All), MoveTo(0, 0))?;
-        eprintln!("Error: {e}");
-        return Ok(());
-    }
+    // 9) Run the main TUI event loop
+    let res = run_app(&mut terminal, &mut app_state);
 
-    // 10) TUI loop ended. Drop raw mode.
+    // 10) On exit, RAII guard will disable raw mode.
     drop(_raw_guard);
 
-    // 11) Clear the screen and say goodbye
+    // Clear screen on exit and say goodbye
     execute!(terminal.backend_mut(), Clear(ClearType::All), MoveTo(0, 0))?;
     print!("Goodbye!{}", LINE_ENDING);
 
-    Ok(())
-}
-
-////////////////////////////////////////////////////////////////////////////////
-// Setup Terminal & Clear
-////////////////////////////////////////////////////////////////////////////////
-
-fn setup_terminal() -> Result<Terminal<CrosstermBackend<std::io::Stdout>>> {
-    let backend = CrosstermBackend::new(io::stdout());
-    let terminal = Terminal::new(backend).context("Failed to initialize ratatui Terminal")?;
-    Ok(terminal)
-}
-
-fn clear_screen(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>) -> Result<()> {
-    terminal.clear()?;
-    Ok(())
-}
-
-////////////////////////////////////////////////////////////////////////////////
-// TUI: Draw "Welcome" Screen
-////////////////////////////////////////////////////////////////////////////////
-
-/// Draws a basic welcome message with instructions, centered on screen.
-fn draw_welcome_screen(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>) -> Result<()> {
-    terminal.draw(|frame| {
-        let size = frame.area();
-
-        // Layout: top banner, then main area
-        let chunks = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([Constraint::Length(5), Constraint::Min(0)].as_ref())
-            .split(size);
-
-        // Draw a top banner
-        draw_banner(frame, chunks[0]);
-
-        // Center a welcome text box in the remaining space
-        let centered = centered_rect(60, 40, chunks[1]);
-
-        let lines = vec![
-            Line::from(Span::styled(
-                "Welcome to File Commander!",
-                Style::default()
-                    .fg(Color::Green)
-                    .add_modifier(Modifier::BOLD),
-            )),
-            Line::from(""),
-            Line::from(Span::styled(
-                "Press Enter to proceed to the main TUI...",
-                Style::default().fg(Color::Yellow),
-            )),
-        ];
-
-        let paragraph = Paragraph::new(lines).alignment(Alignment::Center).block(
-            Block::default()
-                .borders(Borders::ALL)
-                .title(" Welcome ")
-                .border_style(Style::default().fg(Color::Green)),
-        );
-
-        frame.render_widget(paragraph, centered);
-    })?;
-    Ok(())
-}
-
-/// Draw a banner along the top of the screen.
-fn draw_banner(frame: &mut Frame<CrosstermBackend<std::io::Stdout>>, area: Rect) {
-    let line1 = Line::from(Span::styled(
-        "FILE COMMANDER",
-        Style::default()
-            .fg(Color::Magenta)
-            .add_modifier(Modifier::BOLD),
-    ));
-    let line2 = Line::from("A TUI-based file management tool");
-
-    let paragraph = Paragraph::new(vec![line1, line2])
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .title(" Banner ")
-                .border_style(Style::default().fg(Color::Magenta)),
-        )
-        .alignment(Alignment::Center);
-
-    frame.render_widget(paragraph, area);
-}
-
-/// Helper: center a sub-rectangle (rect_width%, rect_height%) within a given area.
-fn centered_rect(rect_width: u16, rect_height: u16, area: Rect) -> Rect {
-    let Layout { .. } = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints(
-            [
-                Constraint::Percentage((100 - rect_height) / 2),
-                Constraint::Percentage(rect_height),
-                Constraint::Percentage((100 - rect_height) / 2),
-            ]
-            .as_ref(),
-        )
-        .split(area);
-
-    let middle_area = Rect {
-        x: area.x,
-        y: area.y + (area.height.saturating_sub(rect_height) / 2),
-        width: area.width,
-        height: area.height,
-    };
-
-    let box_width = middle_area.width.saturating_mul(rect_width) / 100;
-    let box_height = middle_area.height.saturating_mul(rect_height) / 100;
-    let x_offset = middle_area.x + (middle_area.width.saturating_sub(box_width)) / 2;
-    let y_offset = middle_area.y + (middle_area.height.saturating_sub(box_height)) / 2;
-
-    Rect {
-        x: x_offset,
-        y: y_offset,
-        width: box_width,
-        height: box_height,
+    if let Err(e) = res {
+        eprintln!("Error: {e}");
     }
+
+    Ok(())
 }
 
 ////////////////////////////////////////////////////////////////////////////////
-// TUI: Main Event Loop
+// TUI: Main Event-Loop
 ////////////////////////////////////////////////////////////////////////////////
 
 fn run_app(
@@ -313,51 +187,31 @@ fn run_app(
     app_state: &mut AppState,
 ) -> Result<()> {
     loop {
-        // Render
+        // Draw the UI
         terminal.draw(|frame| {
             let size = frame.area();
 
-            // We’ll place the top instructions in a small region,
-            // then the menu, then the log lines at the bottom.
+            // Split the screen vertically into top/middle/bottom
             let chunks = Layout::default()
                 .direction(Direction::Vertical)
                 .constraints([
-                    Constraint::Length(8),  // top area (title + instructions)
+                    Constraint::Length(5),  // top area (banner-ish or short instructions)
                     Constraint::Length(14), // menu area
                     Constraint::Min(10),    // log area
                 ])
                 .split(size);
 
-            // --- (1) Top Pane: Display instructions and current directory
-            let top_text = vec![
-                Line::from(Span::styled(
-                    "FILE COMMANDER",
-                    Style::default()
-                        .fg(Color::Cyan)
-                        .add_modifier(Modifier::BOLD),
-                )),
-                Line::from("Use Up/Down arrows to navigate, Enter to select."),
-                Line::from("Press 'q' to exit at any time, or Ctrl+C."),
-                Line::from(format!(
-                    "Current directory: {}",
-                    app_state.current_dir.display()
-                )),
-            ];
+            // (1) Top pane
+            draw_banner(frame, chunks[0], &app_state.current_dir);
 
-            let top_paragraph = Paragraph::new(top_text).block(
-                Block::default()
-                    .borders(Borders::ALL)
-                    .title(" file-commander "),
-            );
-            frame.render_widget(top_paragraph, chunks[0]);
-
-            // --- (2) Middle Pane: Menu
+            // (2) Middle pane: Menu
             let items: Vec<ListItem> = app_state
                 .menu_items
                 .iter()
                 .enumerate()
                 .map(|(i, &title)| {
                     let style = if i == app_state.menu_index {
+                        // Highlight the current selection
                         Style::default().fg(Color::Black).bg(Color::Yellow)
                     } else {
                         Style::default().fg(Color::White)
@@ -370,11 +224,11 @@ fn run_app(
                 List::new(items).block(Block::default().borders(Borders::ALL).title(" Menu "));
             frame.render_widget(menu, chunks[1]);
 
-            // --- (3) Bottom Pane: Log output
+            // (3) Bottom pane: Log output
             let log_items: Vec<ListItem> = app_state
                 .log_lines
                 .iter()
-                .map(|line| ListItem::new(Line::from(line.as_str())))
+                .map(|line| ListItem::new(Line::from(line.clone())))
                 .collect();
 
             let log_widget =
@@ -382,7 +236,7 @@ fn run_app(
             frame.render_widget(log_widget, chunks[2]);
         })?;
 
-        // Check for input
+        // Handle input (non-blocking poll + read)
         if crossterm::event::poll(Duration::from_millis(100))? {
             if let Event::Key(key_event) = event::read()? {
                 match (key_event.code, key_event.modifiers) {
@@ -393,7 +247,7 @@ fn run_app(
                             .push("Exiting File Commander. Goodbye!".to_string());
                         return Ok(());
                     }
-                    // Up/Down to navigate
+                    // Up/Down arrow to navigate
                     (KeyCode::Up, _) => {
                         if app_state.menu_index > 0 {
                             app_state.menu_index -= 1;
@@ -428,7 +282,7 @@ fn run_app(
                             _ => {}
                         }
                     }
-                    // Ctrl + C to exit quickly
+                    // Ctrl+C to exit quickly
                     (KeyCode::Char('c'), KeyModifiers::CONTROL) => {
                         app_state
                             .log_lines
@@ -443,7 +297,126 @@ fn run_app(
 }
 
 ////////////////////////////////////////////////////////////////////////////////
-// Menu Action Handlers
+// Setup Terminal & Clear
+////////////////////////////////////////////////////////////////////////////////
+
+fn setup_terminal() -> Result<Terminal<CrosstermBackend<std::io::Stdout>>> {
+    let backend = CrosstermBackend::new(io::stdout());
+    let terminal = Terminal::new(backend).context("Failed to initialize ratatui Terminal")?;
+    Ok(terminal)
+}
+
+fn clear_screen(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>) -> Result<()> {
+    terminal.clear()?;
+    Ok(())
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// Draw the initial welcome screen
+////////////////////////////////////////////////////////////////////////////////
+
+fn draw_welcome_screen(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>) -> Result<()> {
+    terminal.draw(|frame| {
+        let size = frame.area();
+
+        // Layout:
+        // - Top banner area: length 5
+        // - Center area for "steps"
+        // - remainder
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Length(5), Constraint::Min(0)].as_ref())
+            .split(size);
+
+        // The top banner
+        draw_banner(
+            frame,
+            chunks[0],
+            &std::env::current_dir().unwrap_or_default(),
+        );
+
+        // The steps box in the main area (centered)
+        let steps_area = centered_rect(60, 30, chunks[1]);
+
+        // We'll show just a few bullet points
+        let steps = vec![
+            ListItem::new("1) Manage files with arrow keys & Enter"),
+            ListItem::new("2) Press 'q' or Ctrl+C to exit at any time"),
+            ListItem::new("3) Enjoy file operations from your terminal!"),
+        ];
+        let steps_list = List::new(steps)
+            .block(
+                Block::default()
+                    .title(" Welcome to File Commander ")
+                    .borders(Borders::ALL)
+                    .border_style(Style::default().fg(Color::Yellow)),
+            )
+            .highlight_symbol(">>");
+
+        frame.render_widget(steps_list, steps_area);
+    })?;
+    Ok(())
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// Draw a top banner
+////////////////////////////////////////////////////////////////////////////////
+
+fn draw_banner(frame: &mut Frame, area: Rect, current_dir: &Path) {
+    let line1 = Line::from(Span::styled(
+        "FILE COMMANDER",
+        Style::default()
+            .fg(Color::Magenta)
+            .add_modifier(Modifier::BOLD),
+    ));
+    let line2 = Line::from(Span::styled(
+        format!("Current Directory: {}", current_dir.display()),
+        Style::default().fg(Color::White),
+    ));
+
+    let paragraph = Paragraph::new(vec![line1, line2])
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(" Banner ")
+                .border_style(Style::default().fg(Color::Magenta)),
+        )
+        .alignment(Alignment::Center);
+
+    frame.render_widget(paragraph, area);
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// Helper: center a smaller box within a given area
+////////////////////////////////////////////////////////////////////////////////
+
+fn centered_rect(percent_x: u16, percent_y: u16, area: Rect) -> Rect {
+    let layout = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints(
+            [
+                Constraint::Percentage((100 - percent_y) / 2),
+                Constraint::Percentage(percent_y),
+                Constraint::Percentage((100 - percent_y) / 2),
+            ]
+            .as_ref(),
+        )
+        .split(area);
+
+    let middle = layout[1];
+    let box_width = middle.width * percent_x / 100;
+    let x_offset = middle.x + (middle.width.saturating_sub(box_width)) / 2;
+
+    Rect {
+        x: x_offset,
+        y: middle.y,
+        width: box_width,
+        height: middle.height,
+    }
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// Menu Actions
 ////////////////////////////////////////////////////////////////////////////////
 
 /// 1) Change directory (cd).
@@ -476,7 +449,7 @@ fn change_directory(app_state: &mut AppState) -> Result<()> {
     Ok(())
 }
 
-/// 2) List directory contents.
+/// 2) List directory contents, similar to `ls`.
 fn list_contents(app_state: &mut AppState) -> Result<()> {
     let show_hidden = read_user_input("Show hidden files? (y/n): ")?;
     let show_hidden = matches_yes(&show_hidden);
@@ -535,7 +508,6 @@ fn print_directory_tree(dir: &Path, level: usize, app_state: &mut AppState) -> R
     let entries = fs::read_dir(dir).context("read_dir failed")?;
     let mut dirs = Vec::new();
     let mut files = Vec::new();
-
     for entry in entries.flatten() {
         let path = entry.path();
         if path.is_dir() {
@@ -604,7 +576,7 @@ fn show_directory_info(app_state: &mut AppState) -> Result<()> {
     Ok(())
 }
 
-/// Recursively compute total size, file count, and directory count.
+/// Recursively compute total size, file count, and directory count of a directory.
 fn compute_directory_stats(dir: &Path) -> Result<(u64, u64, u64)> {
     let mut total_size = 0;
     let mut file_count = 0;
@@ -630,7 +602,7 @@ fn compute_directory_stats(dir: &Path) -> Result<(u64, u64, u64)> {
     Ok((total_size, file_count, dir_count))
 }
 
-/// 5) Create a new file.
+/// 5) Create a new file (touch).
 fn create_file(app_state: &mut AppState) -> Result<()> {
     let filename = read_user_input("Enter name of file to create: ")?;
     let trimmed = filename.trim();
@@ -660,7 +632,7 @@ fn create_file(app_state: &mut AppState) -> Result<()> {
     Ok(())
 }
 
-/// 6) Create a new directory.
+/// 6) Create a new directory (mkdir).
 fn create_directory(app_state: &mut AppState) -> Result<()> {
     let name = read_user_input("Enter name of directory to create: ")?;
     let trimmed = name.trim();
@@ -800,7 +772,7 @@ fn delete_interactive(app_state: &mut AppState) -> Result<()> {
     Ok(())
 }
 
-/// 10) Duplicate file/directory with `_copy` suffix.
+/// 10) Duplicate file/directory quickly by adding `_copy` or similar suffix.
 fn duplicate_interactive(app_state: &mut AppState) -> Result<()> {
     let source = read_user_input("Enter file/directory to duplicate: ")?;
     let source_path = PathBuf::from(source.trim());
@@ -842,7 +814,7 @@ fn duplicate_interactive(app_state: &mut AppState) -> Result<()> {
     Ok(())
 }
 
-/// 11) Organize files (by extension/date/size).
+/// 11) Organize files (single-threaded).
 fn organize_files_interactive(app_state: &mut AppState) -> Result<()> {
     app_state
         .log_lines
@@ -897,7 +869,7 @@ fn organize_files_interactive(app_state: &mut AppState) -> Result<()> {
     Ok(())
 }
 
-/// Recursively collects files (not directories) in the given directory.
+/// Recursively collects files (not directories) from the given directory.
 fn collect_files(dir: &Path) -> Result<Vec<fs::DirEntry>> {
     let mut files = Vec::new();
     for entry in fs::read_dir(dir).context("read_dir failed")? {
@@ -1002,7 +974,7 @@ fn move_file_or_dry_run(
 // Misc Helpers
 ////////////////////////////////////////////////////////////////////////////////
 
-/// Interpret "y"/"yes" as true, otherwise false.
+/// Helper to interpret "y"/"yes" input as true, everything else as false.
 fn matches_yes(input: &str) -> bool {
     let s = input.trim().to_lowercase();
     s == "y" || s == "yes"
