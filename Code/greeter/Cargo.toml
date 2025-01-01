@@ -1,0 +1,14 @@
+[package]
+name = "greeter"
+version = "0.1.0"
+edition = "2021"
+description = "A simple TUI Hello World example using Clap, Crossterm, and TUI."
+license = "MIT"
+repository = "https://github.com/dunamismax/Rust"
+
+[dependencies]
+anyhow = "*"
+crossterm = "*"
+clap = { version = "*", features = ["derive"] }
+tokio = { version = "*", features = ["rt-multi-thread", "macros"] }
+tui = "*"
