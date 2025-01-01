@@ -1,179 +1,127 @@
-# Rust Projects by [dunamismax.com](https://github.com/dunamismax)
+```markdown
+# Rust
 
-A collection of Rust projects showcasing a variety of use cases and coding practices. Each project resides in its own subdirectory under `Rust/Code/`, with its own `Cargo.toml` and source files. Clone the repository, explore the projects that interest you, and feel free to contribute!
+A **collection** of Rust-based projects maintained by [dunamismax](https://dunamismax.com). This repository showcases various **standalone** command-line applications, each in its own folder under the [`Code/`](Code) directory. Whether you’re exploring simple CLI workflows or more advanced TUI experiments, you’ll find examples of modern Rust patterns and practices here.
 
 ---
 
 ## Table of Contents
 
-- [Rust Projects by dunamismax.com](#rust-projects-by-dunamismaxcom)
-  - [Table of Contents](#table-of-contents)
-  - [Overview](#overview)
-  - [Projects](#projects)
-    - [1. Weather CLI](#1-weather-cli)
-    - [2. Reminders CLI](#2-reminders-cli)
-    - [3. File Commander](#3-file-commander)
-  - [Getting Started](#getting-started)
-  - [Usage](#usage)
-  - [Project Structure](#project-structure)
-  - [Contributing](#contributing)
-  - [Contact](#contact)
+- [Overview](#overview)
+- [Repository Structure](#repository-structure)
+- [Subprojects](#subprojects)
+- [Getting Started](#getting-started)
+- [Contributing](#contributing)
+- [License](#license)
+- [Contact](#contact)
 
 ---
 
 ## Overview
 
-This repository holds multiple Rust-based applications, each demonstrating different features or concepts such as CLI design, concurrency, file manipulation, API interaction, and more. Whether you’re a beginner looking to learn Rust or an experienced developer seeking real-world examples, you’ll find something useful here.
+This repo serves as a **playground** and **showcase** for Rust. Each subproject has a dedicated folder with its own `README.md`, `Cargo.toml`, and source code. Topics include:
+
+- **Basic CLI** tools (`hello-world-cli`).
+- **Networking** utilities (`net-commander`).
+- **Task management** apps (`reminders-cli`).
+- **System monitoring** (`rust-top`).
+- **Other** projects exploring new features or libraries.
+
+If you’re interested in learning Rust by example or want to see how to structure small-to-medium Rust projects, this repository offers a variety of patterns and solutions.
 
 ---
 
-## Projects
+## Repository Structure
 
-Below are some highlighted projects in the `Rust/Code/` directory. Each has its own `README.md` with detailed setup instructions, features, and usage examples.
+Below is a simplified view of the core layout:
 
-### 1. Weather CLI
+```bash
 
-**Description**: A command-line application that fetches real-time weather data from the [OpenWeatherMap](https://openweathermap.org/) API.
-**Key Features**:
+Rust/
+├─ Code/
+│  ├─ hello-world-cli/
+│  ├─ net-commander/
+│  ├─ reminders-cli/
+│  ├─ rust-top/
+│  ├─ secure-notes/
+│  ├─ weather-cli/
+│  └─ ... (other applications)
+├─ Wiki/
+│  ├─ ...
+├─ LICENSE
+└─ README.md  <-- You're here (main repository README)
 
-- Fetch weather by city or ZIP code
-- Optional interactive mode if no arguments are given
-- ASCII banner with random colors
-- Displays temperature, humidity, wind info, and more
+```
 
-Go to [Rust/Code/weather-cli](./Code/weather-cli) to learn more.
+Each subdirectory under [`Code/`](Code) is an individual Rust application with its own build script (`Cargo.toml`) and a dedicated `README.md` providing more details.
 
-### 2. Reminders CLI
+---
 
-**Description**: A command-line application that helps you track personal reminders or tasks, storing data locally as a JSON file in your home directory.
-**Key Features**:
+## Subprojects
 
-- Add, list, and remove reminders interactively
-- Optional due date/time (parsed with `chrono`)
-- Mark reminders as completed, and clear all completed entries in one go
-- ASCII banner in random colors for a fun CLI experience
-- Uses `anyhow` for robust error handling and `colored` for terminal styling
+Here are some notable subprojects (not an exhaustive list):
 
-Visit [Rust/Code/reminders-cli](./Code/reminders-cli) for details.
+1. **[rust-top](Code/rust-top)**
+   - A “top-like” TUI tool for monitoring processes, CPU usage, and memory.
 
-### 3. File Commander
+2. **[hello-world-cli](Code/hello-world-cli)**
+   - A minimal command-line greeting utility demonstrating argument parsing and TUI basics.
 
-**Description**: A command-line utility for organizing, copying, moving, or deleting files—an all-in-one file management tool.
-**Key Features**:
+3. **[net-commander](Code/net-commander)**
+   - A simple network utility for checking connectivity, performing pings, or retrieving HTTP endpoints.
 
-- Organize files by extension, date, or size
-- Parallel processing using [Rayon](https://crates.io/crates/rayon)
-- Interactive prompts to guide file actions (copy, move, delete)
-- Example of error handling, concurrency, and filesystem operations
+4. **[reminders-cli](Code/reminders-cli)**
+   - A CLI tool for managing short-term tasks and reminders on the local machine.
 
-Refer to [Rust/Code/file-commander](./Code/file-commander) for further info.
+5. **[weather-cli](Code/weather-cli)**
+   - Retrieves weather data from a public API and displays it via TUI with configurable refresh intervals.
 
-> **Note**: As new projects are added, you’ll see additional folders under `Rust/Code/`. Each will have a dedicated README with installation and usage instructions.
+Check each folder for specific build/run instructions, usage examples, and additional features.
 
 ---
 
 ## Getting Started
 
-1. **Install Rust and Cargo**
-   Make sure [Rustup](https://rustup.rs/) is installed on your system. You can confirm with:
-
-   ```bash
-   rustc --version
-   cargo --version
-   ```
-
-2. **Clone the Repository**
+1. **Clone** this repository:
 
    ```bash
    git clone https://github.com/dunamismax/Rust.git
+   cd Rust
    ```
 
-3. **Navigate to the `Code` folder**
+2. **Explore** the applications in the `Code/` directory:
 
    ```bash
-   cd Rust/Code
+   cd Code/rust-top   # or any other subproject
+   cargo run --release
    ```
 
-4. **Pick a Project**
-   - Example for the Weather CLI:
-
-     ```bash
-     cd weather-cli
-     ```
-
----
-
-## Usage
-
-Because each project is standalone, usage typically follows a pattern:
-
-```bash
-cd Rust/Code/<project-name>
-cargo build
-cargo run [-- <arguments>] # Arguments are not required, every app I make can be run standalone and interactively
-```
-
-For complete details on command-line arguments, environment variables (like API keys), or optional config files, see the individual project’s README.md.
-
----
-
-## Project Structure
-
-Below is a general outline of how this repository is organized. Each subdirectory under `Rust/Code/` represents a distinct project:
-
-```bash
-Rust
-├── Code
-│   ├── weather-cli
-│   │   ├── src
-│   │   ├── Cargo.toml
-│   │   └── README.md
-│   ├── reminders-cli
-│   │   ├── src
-│   │   ├── Cargo.toml
-│   │   └── README.md
-│   ├── file-commander
-│   │   ├── src
-│   │   ├── Cargo.toml
-│   │   └── README.md
-│   └── ...
-└── README.md  <-- You are here
-```
+3. **Customize** or **build** each subproject independently. They do not share dependencies beyond Rust itself.
 
 ---
 
 ## Contributing
 
-Contributions are welcome! Whether it’s fixing bugs, improving documentation, or adding new features/projects:
+Pull requests and issues are welcome! If you’d like to contribute:
 
-1. [Fork](https://github.com/dunamismax/Rust/fork) the repository
-2. Create a new branch:
+1. Fork the repository.
+2. Create a new branch with your changes (`git checkout -b feature-xyz`).
+3. Submit a Pull Request with a clear description of your changes.
 
-   ```bash
-   git checkout -b feature/my-feature
-   ```
+Please open issues if you encounter bugs or have feature ideas. Follow the coding style, provide adequate testing, and keep commits atomic.
 
-3. Commit your changes:
+---
 
-   ```bash
-   git commit -m "Describe your feature"
-   ```
+## License
 
-4. Push to your fork:
-
-   ```bash
-   git push origin feature/my-feature
-   ```
-
-5. Open a [Pull Request](https://github.com/dunamismax/Rust/pulls)
+All projects in this repository are licensed under the [MIT License](LICENSE). Feel free to use, modify, and distribute the code in accordance with this license.
 
 ---
 
 ## Contact
 
-Maintained by [dunamismax.com](https://github.com/dunamismax).
-For any inquiries, you can reach out via [email](mailto:dunamismax@tutamail.com).
+- **Author**: [dunamismax](https://dunamismax.com)
+- **Email**: [dunamismax@tutamail.com](mailto:dunamismax@tutamail.com)
+- **Website / Blog**: [dunamismax.com](https://dunamismax.com)
 
----
-
-Thank you for checking out the **dunamismax/Rust** repository! We hope these projects help you learn something new about Rust—or that they serve as useful utilities for your workflow. Feel free to explore, experiment, and contribute. Happy coding!
+For any questions or suggestions, feel free to reach out or open an [issue](https://github.com/dunamismax/Rust/issues). Enjoy exploring Rust!
