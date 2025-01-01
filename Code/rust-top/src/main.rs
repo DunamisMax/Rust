@@ -18,11 +18,12 @@ use crossterm::{
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, Clear, ClearType},
 };
-use tui::{
+
+use ratatui::{
     backend::CrosstermBackend,
     layout::{Alignment, Constraint, Direction, Layout},
     style::{Color, Modifier, Style},
-    text::{Span, Spans},
+    text::{Line, Span},
     widgets::{Block, Borders, Paragraph, Row, Table},
     Terminal,
 };
@@ -231,7 +232,7 @@ async fn run_task_manager_tui(
                     frame.render_widget(banner_par, layout[0]);
 
                     // [1] Blank spacer
-                    let blank_par = Paragraph::new("");
+                    let blank_par = Paragraph::new(Line::from(""));
                     frame.render_widget(blank_par, layout[1]);
 
                     // [2] Process Table
@@ -290,7 +291,6 @@ async fn run_task_manager_tui(
                     None
                 }
             }) => {
-                // The JoinHandle returns a Result<Option<Event>, JoinError>
                 let maybe_event = event_result?;
                 if let Some(event) = maybe_event {
                     match event {
@@ -376,8 +376,8 @@ fn parse_proc_stat(
     total_jiffies_now: u64,
 ) -> Result<ProcessInfo> {
     let stat_path = format!("/proc/{pid}/stat");
-    let contents =
-        std::fs::read_to_string(&stat_path).context(format!("Could not read {}", stat_path))?;
+    let contents = std::fs::read_to_string(&stat_path)
+        .context(format!("Could not read {}", stat_path))?;
     let parts: Vec<&str> = contents.split_whitespace().collect();
 
     if parts.len() < 24 {
@@ -482,7 +482,7 @@ _|    \__,_| ____/ \__|        \__| \___/   .__/
         let banner_lines = banner_text
             .lines()
             .map(|line| {
-                Spans::from(Span::styled(
+                Line::from(Span::styled(
                     line,
                     Style::default()
                         .fg(Color::Green)
@@ -496,14 +496,16 @@ _|    \__,_| ____/ \__|        \__| \___/   .__/
             .block(Block::default().borders(Borders::NONE));
         frame.render_widget(banner_par, layout[0]);
 
-        let welcome_par = Paragraph::new("Welcome to the Rust TUI Task Manager!")
+        let welcome_par = Paragraph::new(Line::from("Welcome to the Rust TUI Task Manager!"))
             .alignment(Alignment::Left)
             .block(Block::default().borders(Borders::NONE));
         frame.render_widget(welcome_par, layout[2]);
 
-        let prompt_par = Paragraph::new("Press Enter to start monitoring processes...")
-            .alignment(Alignment::Left)
-            .block(Block::default().borders(Borders::NONE));
+        let prompt_par = Paragraph::new(Line::from(
+            "Press Enter to start monitoring processes...",
+        ))
+        .alignment(Alignment::Left)
+        .block(Block::default().borders(Borders::NONE));
         frame.render_widget(prompt_par, layout[4]);
     })?;
 
@@ -514,15 +516,15 @@ _|    \__,_| ____/ \__|        \__| \___/   .__/
 // Utility: Return lines for the top banner in the TUI main loop
 ////////////////////////////////////////////////////////////////////////////////
 
-fn get_banner_lines() -> Vec<Spans<'static>> {
+fn get_banner_lines() -> Vec<Line<'static>> {
     vec![
-        Spans::from(Span::styled(
+        Line::from(Span::styled(
             "Rust Linux Task Manager",
             Style::default()
                 .fg(Color::Cyan)
                 .add_modifier(Modifier::BOLD),
         )),
-        Spans::from(Span::styled(
+        Line::from(Span::styled(
             "Press 'q', 'Esc', or Ctrl-C to quit.",
             Style::default().fg(Color::White),
         )),

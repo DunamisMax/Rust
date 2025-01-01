@@ -1,17 +1,19 @@
 ////////////////////////////////////////////////////////////////////////////////
+// net-commander - A TUI-based network exploration CLI
+////////////////////////////////////////////////////////////////////////////////
+
+////////////////////////////////////////////////////////////////////////////////
 // Imports
 ////////////////////////////////////////////////////////////////////////////////
 
+use anyhow::{Context, Result};
+use clap::Parser;
 use std::{
     io::{self, Write},
     net::ToSocketAddrs,
     process::Command,
 };
 
-use anyhow::Result;
-use clap::Parser;
-
-// Crossterm
 use crossterm::{
     cursor::MoveTo,
     event::{self, Event as CEvent, KeyCode},
@@ -19,12 +21,11 @@ use crossterm::{
     terminal::{disable_raw_mode, enable_raw_mode, Clear, ClearType},
 };
 
-// TUI (tui-rs)
-use tui::{
+use ratatui::{
     backend::CrosstermBackend,
     layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
-    text::{Span, Spans},
+    text::{Line, Span},
     widgets::{Block, Borders, List, ListItem, Paragraph},
     Terminal,
 };
@@ -38,7 +39,6 @@ use tokio::time::{timeout, Duration};
 
 #[cfg(windows)]
 const LINE_ENDING: &str = "\r\n";
-
 #[cfg(not(windows))]
 const LINE_ENDING: &str = "\n";
 
@@ -47,11 +47,35 @@ const LINE_ENDING: &str = "\n";
 ////////////////////////////////////////////////////////////////////////////////
 
 #[derive(Parser, Debug)]
-#[command(author, version, about = "NetCommander (TUI-based CLI)", long_about = None)]
+#[command(author, version, about = "NetCommander (Ratatui-based CLI)", long_about = None)]
 struct CliArgs {
     /// Example verbose flag
     #[arg(long, short, help = "Enable verbose mode")]
     verbose: bool,
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// RAII Guard for Raw Mode
+////////////////////////////////////////////////////////////////////////////////
+
+/// Ensures raw mode is disabled automatically on drop, preventing a "stuck" terminal.
+struct RawModeGuard {
+    active: bool,
+}
+
+impl RawModeGuard {
+    fn new() -> Result<Self> {
+        enable_raw_mode().context("Unable to enable raw mode")?;
+        Ok(Self { active: true })
+    }
+}
+
+impl Drop for RawModeGuard {
+    fn drop(&mut self) {
+        if self.active {
+            let _ = disable_raw_mode();
+        }
+    }
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -66,24 +90,26 @@ async fn main() -> Result<()> {
         print!("Verbose mode enabled...{}", LINE_ENDING);
     }
 
-    // 2) Enable raw mode for TUI and construct a CrosstermBackend
-    enable_raw_mode()?;
-    let backend = CrosstermBackend::new(io::stdout());
-    let mut terminal = Terminal::new(backend)?;
+    // 2) Enable raw mode via RAII guard
+    let _raw_guard = RawModeGuard::new().context("Failed to enable raw mode")?;
 
-    // 3) Clear the screen and display a welcome “banner”
+    // 3) Create Terminal & clear screen
+    let mut terminal = setup_terminal().context("Failed to create terminal")?;
     clear_screen(&mut terminal)?;
+
+    // 4) Draw the welcome banner TUI
     draw_welcome_banner(&mut terminal)?;
 
+    // 5) Draw an initial "app loaded" message at the bottom
     print!("CLI started successfully!{}", LINE_ENDING);
 
-    // 4) Run the main TUI loop (menu navigation, etc.)
+    // 6) Run the main TUI loop
     if let Err(e) = run_main_menu(&mut terminal).await {
         eprint!("Application error: {}{}", e, LINE_ENDING);
     }
 
-    // 5) Before exiting, restore the terminal to normal mode and clear
-    disable_raw_mode()?;
+    // 7) Drop raw mode guard, clearing the terminal upon exit
+    drop(_raw_guard);
     execute!(terminal.backend_mut(), Clear(ClearType::All), MoveTo(0, 0))?;
     print!("Goodbye!{}", LINE_ENDING);
 
@@ -91,56 +117,66 @@ async fn main() -> Result<()> {
 }
 
 ////////////////////////////////////////////////////////////////////////////////
-// Initial Screen / Banner
+// Setup & Screen Clearing
 ////////////////////////////////////////////////////////////////////////////////
 
-/// Clears the terminal screen for a clean start using TUI + crossterm.
-fn clear_screen<B: tui::backend::Backend>(terminal: &mut Terminal<B>) -> Result<()> {
+fn setup_terminal() -> Result<Terminal<CrosstermBackend<std::io::Stdout>>> {
+    let backend = CrosstermBackend::new(io::stdout());
+    let terminal = Terminal::new(backend)?;
+    Ok(terminal)
+}
+
+fn clear_screen(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>) -> Result<()> {
     terminal.clear()?;
     Ok(())
 }
 
-/// Draws a basic “banner” (ASCII art / heading) via a `Paragraph`.
-fn draw_welcome_banner<B: tui::backend::Backend>(terminal: &mut Terminal<B>) -> Result<()> {
+////////////////////////////////////////////////////////////////////////////////
+// Draw the Welcome Banner
+////////////////////////////////////////////////////////////////////////////////
+
+fn draw_welcome_banner(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>) -> Result<()> {
     terminal.draw(|frame| {
-        let size = frame.size();
+        let size = frame.area();
 
-        // Simple layout: just center a paragraph with the name
-        let block = Block::default().borders(Borders::NONE);
-        frame.render_widget(block, size);
+        // We draw a simple banner at the top
+        let banner_rect = centered_rect(80, 20, size);
 
-        // Example ASCII art or simple banner text
-        let banner_text = vec![Spans::from(Span::raw("Welcome to NetCommander!"))];
+        let line1 = Line::from(Span::styled(
+            "Welcome to NetCommander!",
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        ));
+        let line2 = Line::from(Span::raw("A TUI-based network exploration CLI."));
 
-        let paragraph = Paragraph::new(banner_text)
-            .style(
-                Style::default()
-                    .fg(Color::Cyan)
-                    .add_modifier(Modifier::BOLD),
-            )
-            .alignment(Alignment::Center);
+        let paragraph = Paragraph::new(vec![line1, line2])
+            .alignment(Alignment::Center)
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title(" NetCommander ")
+                    .border_style(Style::default().fg(Color::Cyan)),
+            );
 
-        frame.render_widget(paragraph, size);
+        frame.render_widget(paragraph, banner_rect);
     })?;
 
     Ok(())
 }
 
 ////////////////////////////////////////////////////////////////////////////////
-// TUI Application State & Main Menu
+// Main Menu Application State
 ////////////////////////////////////////////////////////////////////////////////
 
-/// Our application state for the main menu.
 struct App {
-    /// The index of the currently selected menu item.
     selected_index: usize,
-    /// The list of menu items to display.
     menu_items: Vec<&'static str>,
 }
 
 impl App {
     fn new() -> Self {
-        App {
+        Self {
             selected_index: 0,
             menu_items: vec![
                 "1) Ping a host",
@@ -157,7 +193,6 @@ impl App {
         }
     }
 
-    /// Moves selection up (in a circular list).
     fn up(&mut self) {
         if self.selected_index == 0 {
             self.selected_index = self.menu_items.len() - 1;
@@ -166,7 +201,6 @@ impl App {
         }
     }
 
-    /// Moves selection down (in a circular list).
     fn down(&mut self) {
         self.selected_index = (self.selected_index + 1) % self.menu_items.len();
     }
@@ -176,57 +210,61 @@ impl App {
 // Main Menu Loop
 ////////////////////////////////////////////////////////////////////////////////
 
-/// Runs the main TUI loop, handling user input and rendering.
-async fn run_main_menu<B: tui::backend::Backend>(terminal: &mut Terminal<B>) -> Result<()> {
+async fn run_main_menu(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>) -> Result<()> {
     let mut app = App::new();
 
     loop {
-        // Draw the UI
+        // Render TUI
         terminal.draw(|frame| {
-            // Split the screen into top (title) and bottom (menu) sections
+            // Split the screen: top for the header, bottom for the menu
             let chunks = Layout::default()
                 .direction(Direction::Vertical)
-                .constraints([Constraint::Length(3), Constraint::Min(1)].as_ref())
-                .split(frame.size());
+                .constraints([Constraint::Length(3), Constraint::Min(0)].as_ref())
+                .split(frame.area());
 
-            // Top section: display the application title
+            // Top area: Just a title
             let title_paragraph = Paragraph::new("net-commander")
                 .style(
                     Style::default()
                         .fg(Color::Cyan)
                         .add_modifier(Modifier::BOLD),
                 )
+                .alignment(Alignment::Center)
                 .block(Block::default().borders(Borders::NONE));
             frame.render_widget(title_paragraph, chunks[0]);
 
-            // Bottom section: main menu items
+            // Bottom area: menu items
             let items: Vec<ListItem> = app
                 .menu_items
                 .iter()
                 .enumerate()
-                .map(|(i, &m)| {
-                    // Highlight the selected item
+                .map(|(i, &text)| {
                     if i == app.selected_index {
                         ListItem::new(Span::styled(
-                            m,
+                            text,
                             Style::default()
                                 .fg(Color::White)
                                 .bg(Color::Blue)
                                 .add_modifier(Modifier::BOLD),
                         ))
                     } else {
-                        ListItem::new(Span::raw(m))
+                        ListItem::new(Span::raw(text))
                     }
                 })
                 .collect();
 
-            let list =
-                List::new(items).block(Block::default().borders(Borders::ALL).title("Main Menu"));
-            frame.render_widget(list, chunks[1]);
+            let menu_list = List::new(items).block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title(" Main Menu ")
+                    .border_style(Style::default().fg(Color::Cyan)),
+            );
+
+            frame.render_widget(menu_list, chunks[1]);
         })?;
 
-        // Handle user inputs (non-blocking)
-        if crossterm::event::poll(Duration::from_millis(200))? {
+        // Poll for key events
+        if crossterm::event::poll(Duration::from_millis(150))? {
             match event::read()? {
                 CEvent::Key(key_event) => match key_event.code {
                     KeyCode::Up => {
@@ -236,7 +274,7 @@ async fn run_main_menu<B: tui::backend::Backend>(terminal: &mut Terminal<B>) -> 
                         app.down();
                     }
                     KeyCode::Enter => {
-                        // Execute based on selected menu item
+                        // Convert selected_index to a char for handle_menu_choice
                         let choice = match app.selected_index {
                             0 => '1',
                             1 => '2',
@@ -251,7 +289,7 @@ async fn run_main_menu<B: tui::backend::Backend>(terminal: &mut Terminal<B>) -> 
                             _ => '?',
                         };
                         if !handle_menu_choice(choice).await? {
-                            // If false returned => user wants to quit
+                            // If we got false => user wants to quit
                             return Ok(());
                         }
                     }
@@ -268,48 +306,32 @@ async fn run_main_menu<B: tui::backend::Backend>(terminal: &mut Terminal<B>) -> 
 }
 
 ////////////////////////////////////////////////////////////////////////////////
-// Handle Menu Choices
+// Handling Menu Selections
 ////////////////////////////////////////////////////////////////////////////////
 
-/// Returns Ok(true) if continuing, Ok(false) if user chose to quit.
+/// Returns `Ok(true)` to continue, or `Ok(false)` if the user chose to quit.
 async fn handle_menu_choice(choice: char) -> Result<bool> {
     match choice {
-        '1' => {
-            ping_host_menu().await;
-        }
-        '2' => {
-            dns_lookup_menu().await;
-        }
-        '3' => {
-            port_scan_menu().await;
-        }
-        '4' => {
-            ping_sweep_menu().await;
-        }
+        '1' => ping_host_menu().await,
+        '2' => dns_lookup_menu().await,
+        '3' => port_scan_menu().await,
+        '4' => ping_sweep_menu().await,
         '5' => {
             list_network_interfaces();
             wait_for_keypress().await;
         }
-        '6' => {
-            subnet_scan_menu().await;
-        }
+        '6' => subnet_scan_menu().await,
         '7' => {
             detect_firewall_and_vpn();
             wait_for_keypress().await;
         }
-        '8' => {
-            latency_monitoring_menu().await;
-        }
-        '9' => {
-            traceroute_menu().await;
-        }
+        '8' => latency_monitoring_menu().await,
+        '9' => traceroute_menu().await,
         'q' | 'Q' => {
-            // Exit
             exit_app();
             return Ok(false);
         }
         _ => {
-            // Unknown choice
             print!("Unknown choice. Press any key to return.{}", LINE_ENDING);
             wait_for_keypress().await;
         }
@@ -318,25 +340,7 @@ async fn handle_menu_choice(choice: char) -> Result<bool> {
 }
 
 ////////////////////////////////////////////////////////////////////////////////
-// Utility Functions
-////////////////////////////////////////////////////////////////////////////////
-
-/// Waits for a single keypress (discarding the result).
-pub async fn wait_for_keypress() {
-    loop {
-        if let Ok(CEvent::Key(_)) = event::read() {
-            break;
-        }
-    }
-}
-
-/// Gracefully exit app: show a goodbye message, etc.
-fn exit_app() {
-    print!("Exiting net-commander. Goodbye!{}", LINE_ENDING);
-}
-
-////////////////////////////////////////////////////////////////////////////////
-// Sub-Menu & Network Functions
+// Network-Related Submenus & Functions
 ////////////////////////////////////////////////////////////////////////////////
 
 async fn ping_host_menu() {
@@ -367,7 +371,7 @@ async fn ping_host_menu() {
     wait_for_keypress().await;
 }
 
-/// Returns OS-specific ping arguments (4 pings).
+/// Returns OS-specific ping arguments (e.g., 4 times).
 fn get_ping_args(host: &str) -> Vec<String> {
     if cfg!(target_os = "windows") {
         vec!["-n".to_string(), "4".to_string(), host.to_string()]
@@ -385,7 +389,7 @@ async fn dns_lookup_menu() {
     }
 
     print!("Resolving DNS for {} ...{}", host, LINE_ENDING);
-    let socket_str = format!("{}:0", host);
+    let socket_str = format!("{host}:0");
     match socket_str.to_socket_addrs() {
         Ok(addrs) => {
             let v: Vec<_> = addrs.collect();
@@ -420,22 +424,19 @@ async fn port_scan_menu() {
     let start_port = start_port_str.parse().unwrap_or(1);
     let end_port = end_port_str.parse().unwrap_or(1024);
 
-    print!(
-        "Scanning TCP ports on {} from {} to {}...{}",
-        host, start_port, end_port, LINE_ENDING
-    );
+    print!("Scanning TCP ports on {host} from {start_port} to {end_port}...{LINE_ENDING}");
 
-    let mut handles = Vec::new();
+    let mut tasks = Vec::new();
     for port in start_port..=end_port {
         let host_clone = host.clone();
-        handles.push(tokio::spawn(
+        tasks.push(tokio::spawn(
             async move { scan_port(&host_clone, port).await },
         ));
     }
 
     let mut open_ports = Vec::new();
-    for handle in handles {
-        if let Ok(Some(port)) = handle.await {
+    for t in tasks {
+        if let Ok(Some(port)) = t.await {
             open_ports.push(port);
         }
     }
@@ -455,7 +456,7 @@ async fn port_scan_menu() {
 
 /// Attempt to connect to a (host, port). Returns `Some(port)` if open, else `None`.
 async fn scan_port(host: &str, port: u16) -> Option<u16> {
-    let addr = format!("{}:{}", host, port);
+    let addr = format!("{host}:{port}");
     match timeout(Duration::from_millis(500), TcpStream::connect(&addr)).await {
         Ok(Ok(_)) => Some(port), // Connected => open
         _ => None,               // Timed out or error => closed/filtered
@@ -475,14 +476,11 @@ async fn ping_sweep_menu() {
     let start_id = start_id_str.parse().unwrap_or(1);
     let end_id = end_id_str.parse().unwrap_or(10);
 
-    print!(
-        "Performing ping sweep from {}.{} to {}.{}{}",
-        base_ip, start_id, base_ip, end_id, LINE_ENDING
-    );
+    print!("Performing ping sweep from {base_ip}.{start_id} to {base_ip}.{end_id}{LINE_ENDING}");
 
     let mut tasks = Vec::new();
     for id in start_id..=end_id {
-        let ip_string = format!("{}.{}", base_ip, id);
+        let ip_string = format!("{base_ip}.{id}");
         tasks.push(tokio::spawn(async move {
             if is_reachable(&ip_string).await {
                 Some(ip_string)
@@ -504,7 +502,7 @@ async fn ping_sweep_menu() {
     } else {
         print!("Hosts responding to ping:{}", LINE_ENDING);
         for ip in reachable {
-            print!("  {}{}", ip, LINE_ENDING);
+            print!("  {ip}{}", LINE_ENDING);
         }
     }
 
@@ -517,7 +515,7 @@ async fn is_reachable(ip: &str) -> bool {
     match output {
         Ok(o) => {
             let stdout = String::from_utf8_lossy(&o.stdout).to_lowercase();
-            // naive check: "0% packet loss" often indicates success on Unix
+            // naive check: "0% packet loss" or " no loss" might indicate success
             stdout.contains("0% packet loss") || stdout.contains(" no loss")
         }
         Err(_) => false,
@@ -526,7 +524,7 @@ async fn is_reachable(ip: &str) -> bool {
 
 fn list_network_interfaces() {
     print!("Network Interfaces:{}", LINE_ENDING);
-    // Naive approach: shell out to ifconfig/ipconfig
+    // Naive approach: shell out to ifconfig or ipconfig
     if cfg!(target_os = "windows") {
         let _ = Command::new("ipconfig").status();
     } else {
@@ -543,7 +541,7 @@ async fn subnet_scan_menu() {
         return;
     }
 
-    print!("Subnet scanning {}{}", cidr_input, LINE_ENDING);
+    print!("Subnet scanning {cidr_input}{LINE_ENDING}");
 
     let parts: Vec<&str> = cidr_input.split('/').collect();
     if parts.len() != 2 {
@@ -590,11 +588,11 @@ async fn subnet_scan_menu() {
         );
     } else {
         print!(
-            "Hosts responding to ping in {}/{}:{}",
-            base_ip_str, cidr_bits, LINE_ENDING
+            "Hosts responding to ping in {base_ip_str}/{cidr_bits}:{}",
+            LINE_ENDING
         );
         for ip in reachable {
-            print!("  {}{}", ip, LINE_ENDING);
+            print!("  {ip}{}", LINE_ENDING);
         }
     }
 
@@ -700,37 +698,36 @@ async fn latency_monitoring_menu() {
     }
 
     print!(
-        "Latency monitoring for {} (press any key to stop)...{}",
-        host, LINE_ENDING
+        "Latency monitoring for {host} (press any key to stop)...{LINE_ENDING}\
+         Pinging once per second...{LINE_ENDING}"
     );
-    print!("Pinging once per second...{}", LINE_ENDING);
 
     loop {
         let output = Command::new("ping")
             .args(get_latency_ping_args(&host))
             .output();
-
         match output {
             Ok(o) => {
                 let out = String::from_utf8_lossy(&o.stdout).to_string();
+                // Try to grab the last line for a short print
                 if let Some(line) = out.lines().last() {
-                    print!("{}{}", line, LINE_ENDING);
+                    print!("{line}{}", LINE_ENDING);
                 } else {
-                    print!("{}{}", out, LINE_ENDING);
+                    print!("{out}{}", LINE_ENDING);
                 }
             }
             Err(e) => {
-                print!("Ping error: {}{}", e, LINE_ENDING);
+                print!("Ping error: {e}{}", LINE_ENDING);
             }
         }
 
-        // Check if a key was pressed. If so, break out.
+        // Check if a key was pressed to break out
         if crossterm::event::poll(Duration::from_millis(100)).unwrap() {
             if let Ok(CEvent::Key(_)) = event::read() {
                 break;
             }
         }
-        // Sleep for ~1 second between pings
+        // Sleep for ~1s
         tokio::time::sleep(Duration::from_secs(1)).await;
     }
 
@@ -743,10 +740,8 @@ async fn latency_monitoring_menu() {
 
 fn get_latency_ping_args(host: &str) -> Vec<String> {
     if cfg!(target_os = "windows") {
-        // -n 1 => one ping
         vec!["-n".to_string(), "1".to_string(), host.to_string()]
     } else {
-        // -c 1 => one ping
         vec!["-c".to_string(), "1".to_string(), host.to_string()]
     }
 }
@@ -759,8 +754,7 @@ async fn traceroute_menu() {
         return;
     }
 
-    print!("Performing traceroute to {} ...{}", host, LINE_ENDING);
-
+    print!("Performing traceroute to {host} ...{LINE_ENDING}");
     if cfg!(target_os = "windows") {
         let output = Command::new("tracert").arg(host.clone()).output();
         match output {
@@ -768,7 +762,7 @@ async fn traceroute_menu() {
                 print!("{}{}", String::from_utf8_lossy(&o.stdout), LINE_ENDING);
             }
             Err(e) => {
-                print!("Failed to run tracert: {}{}", e, LINE_ENDING);
+                print!("Failed to run tracert: {e}{}", LINE_ENDING);
             }
         }
     } else {
@@ -778,7 +772,7 @@ async fn traceroute_menu() {
                 print!("{}{}", String::from_utf8_lossy(&o.stdout), LINE_ENDING);
             }
             Err(e) => {
-                print!("Failed to run traceroute: {}{}", e, LINE_ENDING);
+                print!("Failed to run traceroute: {e}{}", LINE_ENDING);
             }
         }
     }
@@ -788,15 +782,31 @@ async fn traceroute_menu() {
 }
 
 ////////////////////////////////////////////////////////////////////////////////
-// get_user_input Helper
+// Graceful Exit & Misc Helpers
 ////////////////////////////////////////////////////////////////////////////////
 
-/// Prompts the user for input in "cooked" mode (temporarily disabling raw mode).
+fn exit_app() {
+    print!("Exiting net-commander. Goodbye!{}", LINE_ENDING);
+}
+
+/// Waits for a single keypress.
+pub async fn wait_for_keypress() {
+    loop {
+        if let Ok(CEvent::Key(_)) = event::read() {
+            break;
+        }
+    }
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// User Input (temporarily disabling raw mode)
+////////////////////////////////////////////////////////////////////////////////
+
 fn get_user_input(prompt: &str) -> String {
-    // Disable raw mode so we can do normal line-based input
+    // Temporarily disable raw mode for line-based input
     let _ = disable_raw_mode();
 
-    print!("{}{}", prompt, LINE_ENDING);
+    print!("{prompt}{}", LINE_ENDING);
     print!("> ");
     let _ = io::stdout().flush();
 
@@ -805,8 +815,36 @@ fn get_user_input(prompt: &str) -> String {
         .read_line(&mut input)
         .expect("Failed to read line");
 
-    // Re-enable raw mode for TUI
+    // Re-enable raw mode
     let _ = enable_raw_mode();
-
     input.trim().to_string()
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// Helper: center a box within the terminal
+////////////////////////////////////////////////////////////////////////////////
+
+fn centered_rect(percent_x: u16, percent_y: u16, area: Rect) -> Rect {
+    let layout = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints(
+            [
+                Constraint::Percentage((100 - percent_y) / 2),
+                Constraint::Percentage(percent_y),
+                Constraint::Percentage((100 - percent_y) / 2),
+            ]
+            .as_ref(),
+        )
+        .split(area);
+
+    let middle = layout[1];
+    let box_width = middle.width.saturating_mul(percent_x) / 100;
+    let x_offset = middle.x + (middle.width.saturating_sub(box_width)) / 2;
+
+    Rect {
+        x: x_offset,
+        y: middle.y,
+        width: box_width,
+        height: middle.height,
+    }
 }

@@ -2,6 +2,14 @@
 name = "reminders-cli"
 version = "0.1.0"
 edition = "2021"
+description = "A Ratatui-based TUI for managing your reminders right in the terminal."
+license = "MIT"
+repository = "https://github.com/dunamismax/Rust"
+readme = "README.md"
+homepage = "https://github.com/dunamismax/Rust"
+documentation = "https://github.com/dunamismax/Rust/Code/reminders-cli"
+keywords = ["tui", "rust", "reminders"]
+categories = ["command-line-utilities", "text-user-interface"]
 
 [dependencies]
 anyhow = "*"
@@ -13,4 +21,9 @@ serde = { version = "*", features = ["derive"] }
 serde_json = "*"
 tokio = { version = "*", features = ["full"] }
 clap = { version = "*", features = ["derive"] }
-tui = "*"
+ratatui = "*"
+
+[profile.release]
+opt-level = 3
+debug = false
+lto = true

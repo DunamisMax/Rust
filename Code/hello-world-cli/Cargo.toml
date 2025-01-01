@@ -2,12 +2,26 @@
 name = "hello-world-cli"
 version = "0.1.0"
 edition = "2021"
+description = "A simple TUI Multilingual Hello World example using Clap, Crossterm, and Ratatui."
+license = "MIT"
+repository = "https://github.com/dunamismax/Rust"
+readme = "README.md"
+homepage = "https://github.com/dunamismax/Rust"
+documentation = "https://github.com/dunamismax/Rust/Code/hello-world-cli"
+keywords = ["tui", "rust"]
+categories = ["command-line-utilities", "text-user-interface"]
 
 [dependencies]
-rand = "*"
-figlet-rs = "*"
 anyhow = "*"
 crossterm = "*"
-tokio = { version = "*", features = ["full"] }
 clap = { version = "*", features = ["derive"] }
-tui = "*"
+tokio = { version = "*", features = ["full"] }
+ratatui = "*"
+rand = "*"
+figlet-rs = "*"
+
+[profile.release]
+# If you want to squeeze out more performance in release builds:
+opt-level = 3
+debug = false
+lto = true

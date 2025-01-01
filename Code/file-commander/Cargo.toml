@@ -2,12 +2,29 @@
 name = "file-commander"
 version = "0.1.0"
 edition = "2021"
+description = "A TUI-based file management and organization tool using Clap, Crossterm, and Ratatui."
+license = "MIT"
+repository = "https://github.com/dunamismax/Rust"
+readme = "README.md"
+homepage = "https://github.com/dunamismax/Rust"
+documentation = "https://github.com/dunamismax/Rust/Code/file-commander"
+keywords = ["tui", "rust", "file-management"]
+categories = ["command-line-utilities", "text-user-interface"]
 
 [dependencies]
+anyhow = "*"
+crossterm = "*"
+clap = { version = "*", features = ["derive"] }
+tokio = { version = "*", features = ["full"] }
+ratatui = "*"
+
+# Additional crates from the original app
 chrono = "*"
 rayon = "*"
 rand = "*"
-crossterm = "*"
-tokio = { version = "*", features = ["full"] }
-clap = { version = "*", features = ["derive"] }
-tui = "*"
+
+[profile.release]
+# If you want to squeeze out more performance in release builds:
+opt-level = 3
+debug = false
+lto = true

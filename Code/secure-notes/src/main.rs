@@ -1,31 +1,13 @@
 ////////////////////////////////////////////////////////////////////////////////
+// secure-notes - Encrypted Notes Manager with Ratatui + Tokio + Crossterm
+////////////////////////////////////////////////////////////////////////////////
+
+////////////////////////////////////////////////////////////////////////////////
 // Imports
 ////////////////////////////////////////////////////////////////////////////////
 
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context, Result};
 use clap::Parser;
-
-use crossterm::{
-    cursor::MoveTo,
-    event::{self, Event, KeyCode, KeyEvent},
-    execute,
-    terminal::{self, Clear, ClearType, disable_raw_mode, enable_raw_mode},
-};
-//
-// If you actually want mouse capture, uncomment the following lines:
-// use crossterm::event::EnableMouseCapture;
-// use crossterm::event::DisableMouseCapture;
-// use crossterm::terminal::{EnterAlternateScreen, LeaveAlternateScreen};
-
-use tui::{
-    backend::{Backend, CrosstermBackend},
-    layout::{Constraint, Direction, Layout, Rect},
-    style::{Color, Modifier, Style},
-    text::{Line, Span},
-    widgets::{Block, Borders, List, ListItem, Paragraph},
-    Terminal, Frame,
-};
-
 use ring::{aead, pbkdf2, rand as ring_rand};
 use serde::{Deserialize, Serialize};
 
@@ -36,6 +18,25 @@ use std::{
     path::Path,
     time::Duration,
 };
+
+use crossterm::{
+    cursor::MoveTo,
+    event::{self, Event, KeyCode, KeyEvent},
+    execute,
+    terminal::{disable_raw_mode, enable_raw_mode, Clear, ClearType},
+};
+
+// IMPORTANT: In ratatui 0.29, we just import `Frame` (with no generic param)
+use ratatui::{
+    backend::CrosstermBackend,
+    layout::{Alignment, Constraint, Direction, Layout, Rect},
+    style::{Color, Modifier, Style},
+    text::{Line, Span, Text},
+    widgets::{Block, Borders, List, ListItem, Paragraph},
+    Frame, Terminal,
+};
+
+use rand::Rng;
 
 ////////////////////////////////////////////////////////////////////////////////
 // Cross-Platform Line Endings
@@ -48,7 +49,7 @@ const LINE_ENDING: &str = "\r\n";
 const LINE_ENDING: &str = "\n";
 
 ////////////////////////////////////////////////////////////////////////////////
-// Clap Arguments
+// CLI Arguments
 ////////////////////////////////////////////////////////////////////////////////
 
 #[derive(Parser, Debug)]
@@ -61,10 +62,9 @@ struct CliArgs {
 
 ////////////////////////////////////////////////////////////////////////////////
 // SALT & PBKDF2 CONFIG (Demo Purposes Only)
+// In production, use a unique salt & high iteration count per user.
 ////////////////////////////////////////////////////////////////////////////////
 
-/// In production, each user typically requires a unique salt and higher iteration count.
-/// This static salt is only for demonstration.
 const SALT: &[u8] = b"fixed-salt-demo";
 const PBKDF2_ITERATIONS: u32 = 100_000;
 
@@ -74,7 +74,6 @@ const PBKDF2_ITERATIONS: u32 = 100_000;
 
 /// Generates a user-friendly 6-digit numeric ID.
 fn generate_user_friendly_id() -> String {
-    use rand::Rng;
     let mut rng = rand::thread_rng();
     let number: u32 = rng.gen_range(0..=999999);
     format!("{:06}", number)
@@ -87,7 +86,7 @@ struct Note {
     content: String,
 }
 
-/// Tracks which TUI screen we’re on.
+/// The different TUI screens.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Screen {
     PasswordPrompt,
@@ -101,23 +100,46 @@ enum Screen {
     Exit,
 }
 
-/// For note editing, we keep track of which note ID we’re editing, plus the text buffer.
+/// For note editing, track which note ID we’re editing and the text buffer.
 #[derive(Debug, Clone)]
 struct EditState {
     note_id: Option<String>,
     buffer: String,
 }
 
-/// Main TUI app state.
+/// Main TUI App State.
 struct App {
     password: String,      // Master password
     key: [u8; 32],         // Derived encryption key
     notes: Vec<Note>,      // All notes
     screen: Screen,        // Current screen
-    input_buffer: String,  // Generic input (e.g. for prompts)
-    edit_state: EditState, // State used during note create/edit
-    error_message: String, // Display any errors to user
-    file_path: String,     // Encrypted notes file path
+    input_buffer: String,  // Generic input buffer (prompt usage, etc.)
+    edit_state: EditState, // For note creation & editing
+    error_message: String, // Displayable error message
+    file_path: String,     // The file path where notes are stored
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// RAII guard for raw mode. Ensures raw mode is disabled even on panic.
+////////////////////////////////////////////////////////////////////////////////
+
+struct RawModeGuard {
+    active: bool,
+}
+
+impl RawModeGuard {
+    fn new() -> Result<Self> {
+        enable_raw_mode().context("Unable to enable raw mode")?;
+        Ok(Self { active: true })
+    }
+}
+
+impl Drop for RawModeGuard {
+    fn drop(&mut self) {
+        if self.active {
+            let _ = disable_raw_mode();
+        }
+    }
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -129,102 +151,75 @@ async fn main() -> Result<()> {
     // 1) Parse CLI arguments
     let args = CliArgs::parse();
 
-    // 2) Enable raw mode for TUI
-    enable_raw_mode()?;
+    // 2) Enable raw mode via our RAII guard
+    let _raw_guard = RawModeGuard::new().context("Failed to enable raw mode")?;
 
-    // 3) Construct a CrosstermBackend
-    //
-    // If you do want to capture mouse events + alternate screen, uncomment below:
-    /*
-    let mut stdout = io::stdout();
-    execute!(stdout, EnableMouseCapture, EnterAlternateScreen)?;
-    let backend = CrosstermBackend::new(stdout);
-    */
-    // Otherwise, do:
-    let backend = CrosstermBackend::new(io::stdout());
-    let mut terminal = Terminal::new(backend)?;
+    // 3) Create the Ratatui Terminal
+    let mut terminal = setup_terminal().context("Failed to create terminal")?;
 
-    // 4) Clear the screen using TUI
-    clear_screen(&mut terminal)?;
+    // 4) Clear the screen
+    clear_screen(&mut terminal).context("Failed to clear terminal")?;
 
-    // 5) Print a welcome banner once at app start (Paragraph-based)
-    draw_welcome_banner(&mut terminal)?;
+    // 5) Print a quick message with cross-platform line ending
+    print!("   CLI started successfully...{}", LINE_ENDING);
 
-    // 6) Print a quick message with cross-platform line ending
-    print!("CLI started successfully!{}", LINE_ENDING);
-
-    // 7) Build initial app state
+    // 6) Build initial App state
     let app = App {
         password: String::new(),
         key: [0u8; 32],
         notes: Vec::new(),
-        screen: Screen::PasswordPrompt, // Start by prompting for password
+        screen: Screen::PasswordPrompt,
         input_buffer: String::new(),
         edit_state: EditState {
             note_id: None,
             buffer: String::new(),
         },
         error_message: String::new(),
-        file_path: args.file, // from CLI args
+        file_path: args.file,
     };
 
-    // 8) Run the main TUI loop
-    let result = run_app(&mut terminal, app);
+    // 7) Launch the main TUI loop
+    if let Err(e) = run_app(&mut terminal, app) {
+        // If the app errored, restore terminal and show the error
+        finalize_terminal(&mut terminal)?;
+        eprintln!("Error: {e}");
+        return Err(e);
+    }
 
-    // 9) Before exiting, restore terminal to normal mode
-    disable_raw_mode()?;
-    // If you used alternate screen + mouse capture, uncomment:
-    /*
-    execute!(
-        terminal.backend_mut(),
-        DisableMouseCapture,
-        LeaveAlternateScreen
-    )?;
-    */
-    // Otherwise, just clear the entire screen and move cursor to (0,0):
-    execute!(
-        terminal.backend_mut(),
-        Clear(ClearType::All),
-        MoveTo(0, 0)
-    )?;
+    // 8) If everything is OK, finalize
+    finalize_terminal(&mut terminal)?;
     print!("Goodbye!{}", LINE_ENDING);
 
-    // If the app returned an error, display it
-    if let Err(e) = result {
-        eprint!("Error: {:?}{}", e, LINE_ENDING);
-    }
     Ok(())
 }
 
 ////////////////////////////////////////////////////////////////////////////////
-// Utility Functions
+// Utility: Setup Terminal
 ////////////////////////////////////////////////////////////////////////////////
 
-/// Clears the terminal screen for a clean start using tui.
-fn clear_screen<B: Backend>(terminal: &mut Terminal<B>) -> Result<()> {
+fn setup_terminal() -> Result<Terminal<CrosstermBackend<std::io::Stdout>>> {
+    let backend = CrosstermBackend::new(io::stdout());
+    let terminal = Terminal::new(backend)?;
+    Ok(terminal)
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// Utility: Clears the terminal screen
+////////////////////////////////////////////////////////////////////////////////
+
+fn clear_screen(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>) -> Result<()> {
     terminal.clear()?;
     Ok(())
 }
 
-/// A single-time banner at app launch (separate from the “always-present” TUI banner).
-fn draw_welcome_banner<B: Backend>(terminal: &mut Terminal<B>) -> Result<()> {
-    // A minimal text banner for launch
-    let banner = r#"
-    Welcome to Secure Notes!
-    ========================
-    Your encrypted note management system
-    "#;
+////////////////////////////////////////////////////////////////////////////////
+// Utility: Finalize Terminal (disable raw mode, clear screen, move cursor)
+////////////////////////////////////////////////////////////////////////////////
 
-    // Use a Paragraph to display the banner in the center
-    let size = terminal.size()?;
-    let block = Paragraph::new(banner)
-        .block(Block::default().borders(Borders::NONE))
-        .style(Style::default().fg(Color::Cyan));
-
-    terminal.draw(|f| {
-        f.render_widget(block, size);
-    })?;
-
+fn finalize_terminal(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>) -> Result<()> {
+    // The RawModeGuard will automatically disable raw mode upon drop.
+    // Manually clear the screen + move the cursor home:
+    execute!(terminal.backend_mut(), Clear(ClearType::All), MoveTo(0, 0))?;
     Ok(())
 }
 
@@ -232,25 +227,25 @@ fn draw_welcome_banner<B: Backend>(terminal: &mut Terminal<B>) -> Result<()> {
 // Main TUI Loop
 ////////////////////////////////////////////////////////////////////////////////
 
-fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> Result<()> {
+fn run_app(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>, mut app: App) -> Result<()> {
     loop {
-        // Render the UI for the current state
+        // 1) Draw current TUI
         terminal.draw(|frame| draw_ui(frame, &app))?;
 
-        // Poll for events (non-blocking)
+        // 2) Check for input events with a short timeout
         if crossterm::event::poll(Duration::from_millis(200))? {
             match event::read()? {
                 Event::Key(key_event) => {
                     handle_key_event(key_event, &mut app)?;
                 }
                 Event::Mouse(_) => {
-                    // We won’t handle mouse in this minimal example
+                    // Not handling mouse input in this example
                 }
                 _ => {}
             }
         }
 
-        // If user’s on the Exit screen, break out
+        // 3) If user is ready to exit, break out
         if app.screen == Screen::Exit {
             break;
         }
@@ -259,178 +254,184 @@ fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> Result<()> {
 }
 
 ////////////////////////////////////////////////////////////////////////////////
-// TUI Drawing
+// TUI Rendering
 ////////////////////////////////////////////////////////////////////////////////
 
-/// Draws the entire TUI, selecting which “screen” to show.
-fn draw_ui<B: Backend>(frame: &mut Frame<B>, app: &App) {
-    let area = frame.size();
+/// The top-level function that draws each screen.
+/// Notice there's **no** `<B: Backend>` or `Frame<'_, B>`—just `Frame`.
+fn draw_ui(frame: &mut Frame, app: &App) {
+    let size = frame.area();
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(6), // For the ASCII banner
+            Constraint::Min(0),    // The main screen
+            Constraint::Length(3), // For an optional error/footer
+        ])
+        .split(size);
 
-    // Always draw a top banner (ASCII art) at the top
-    draw_banner(frame, area);
+    // 1) Banner (always displayed)
+    draw_banner(frame, chunks[0]);
 
-    // Dispatch to each screen below
+    // 2) Main screen
     match app.screen {
-        Screen::PasswordPrompt => draw_password_prompt(frame, app, area),
-        Screen::Menu => draw_main_menu(frame, app, area),
-        Screen::ViewNotes => draw_view_notes(frame, app, area),
-        Screen::CreateNote | Screen::EditNote => draw_note_editor(frame, app, area),
+        Screen::PasswordPrompt => draw_password_prompt(frame, app, chunks[1]),
+        Screen::Menu => draw_main_menu(frame, chunks[1]),
+        Screen::ViewNotes => draw_view_notes(frame, app, chunks[1]),
+        Screen::CreateNote | Screen::EditNote => draw_note_editor(frame, app, chunks[1]),
         Screen::DeleteNote | Screen::OpenNote | Screen::DeleteAll => {
-            draw_simple_input(frame, app, area)
+            draw_simple_input(frame, app, chunks[1])
         }
         Screen::Exit => {
-            // Nothing special
+            // Nothing
         }
     }
 
-    // Draw any error message at the bottom.
+    // 3) Error message or status line
     if !app.error_message.is_empty() {
         let block = Block::default()
-            .borders(Borders::ALL)
             .title("Error")
+            .borders(Borders::ALL)
             .border_style(Style::default().fg(Color::Red));
-        let paragraph = Paragraph::new(app.error_message.as_str())
+        let paragraph = Paragraph::new(Text::raw(&app.error_message))
             .block(block)
             .style(Style::default().fg(Color::Red));
-        let rect = centered_rect(60, 3, area);
-        frame.render_widget(paragraph, rect);
+        frame.render_widget(paragraph, chunks[2]);
     }
 }
 
-/// Minimal banner with some ASCII art, using tui styles.
-fn draw_banner<B: Backend>(frame: &mut Frame<B>, area: Rect) {
-    let banner_text = r#"
- ___   ___   ___  _   _  _ __   ___   _ __    ___  | |_   ___  ___
-/ __| / _ \ / __|| | | || '__| / _ \ | '_ \  / _ \ | __| / _ \/ __|
-\__ \|  __/| (__ | |_| || |   |  __/ | | | || (_) || |_ |  __/\__ \
-|___/ \___| \___| \__,_||_|    \___| |_| |_| \___/  \__| \___||___/
-"#;
+/// Minimal banner at the top.
+fn draw_banner(frame: &mut Frame, area: Rect) {
+    // We’ll do a two-line banner:
+    //  1) A colorful “SECURE NOTES”
+    //  2) A short tagline or divider
 
+    // First line: "SECURE NOTES" in bright magenta, bold
     let line1 = Line::from(Span::styled(
-        "SECURE NOTES\n",
+        " SECURE NOTES ",
         Style::default()
             .fg(Color::Magenta)
             .add_modifier(Modifier::BOLD),
     ));
-    let line2 = Line::from(Span::raw(banner_text));
 
-    let block = Block::default().borders(Borders::ALL).title(" Secure Notes ");
-    let paragraph = Paragraph::new(vec![line1, line2]).block(block).style(
+    // Second line: could be a simple divider, subtitle, or tagline
+    let line2 = Line::from(Span::styled(
+        " An Encrypted TUI App ",
         Style::default()
-            .fg(Color::Magenta)
-            .add_modifier(Modifier::BOLD),
-    );
+            .fg(Color::White)
+            .add_modifier(Modifier::ITALIC),
+    ));
 
-    let layout = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([Constraint::Length(7), Constraint::Min(0)].as_ref())
-        .split(area);
+    // Combine lines in a Paragraph
+    let paragraph = Paragraph::new(vec![line1, line2])
+        .block(Block::default().borders(Borders::ALL).title(" Welcome "))
+        .alignment(Alignment::Center)
+        .wrap(ratatui::widgets::Wrap { trim: true });
 
-    frame.render_widget(paragraph, layout[0]);
+    frame.render_widget(paragraph, area);
 }
 
-/// Draw the password prompt screen.
-fn draw_password_prompt<B: Backend>(frame: &mut Frame<B>, app: &App, area: Rect) {
+fn draw_password_prompt(frame: &mut Frame, app: &App, area: Rect) {
     let block = Block::default()
-        .borders(Borders::ALL)
-        .title("Enter Master Password (Press ENTER to confirm, ESC to exit)");
-
-    // In real usage, you might want to mask the input with '*'
+        .title("Enter Master Password (ENTER=confirm, ESC=exit)")
+        .borders(Borders::ALL);
+    // For real usage, you might mask the password with '*'
     let paragraph = Paragraph::new(app.input_buffer.as_str())
         .block(block)
         .style(Style::default().fg(Color::Yellow));
 
-    let rect = centered_rect(60, 3, area);
-    frame.render_widget(paragraph, rect);
+    frame.render_widget(paragraph, area);
 }
 
-/// Draw the main menu.
-fn draw_main_menu<B: Backend>(frame: &mut Frame<B>, _app: &App, area: Rect) {
-    let items = vec![
-        ListItem::new("1) View Notes"),
-        ListItem::new("2) Create Note"),
-        ListItem::new("3) Edit Note"),
-        ListItem::new("4) Delete Note"),
-        ListItem::new("5) Open Note"),
-        ListItem::new("6) Delete ALL Notes"),
-        ListItem::new("7) Exit"),
+fn draw_main_menu(frame: &mut Frame, area: Rect) {
+    let options = vec![
+        "1) View Notes",
+        "2) Create Note",
+        "3) Edit Note",
+        "4) Delete Note",
+        "5) Open Note",
+        "6) Delete ALL Notes",
+        "7) Exit",
     ];
-    let list = List::new(items)
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .title("Secure Notes Menu"),
-        )
-        .style(Style::default().fg(Color::Cyan));
+    let items: Vec<ListItem> = options
+        .into_iter()
+        .map(|opt| ListItem::new(Span::raw(opt)))
+        .collect();
 
-    let rect = centered_rect(40, 15, area);
-    frame.render_widget(list, rect);
+    let block = Block::default()
+        .title(" Secure Notes Menu ")
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::Green));
+    let list = List::new(items)
+        .block(block)
+        .style(Style::default().fg(Color::White));
+
+    frame.render_widget(list, area);
 }
 
-/// Displays notes in truncated form.
-fn draw_view_notes<B: Backend>(frame: &mut Frame<B>, app: &App, area: Rect) {
+fn draw_view_notes(frame: &mut Frame, app: &App, area: Rect) {
     if app.notes.is_empty() {
-        let block = Block::default().borders(Borders::ALL).title("View Notes");
+        let block = Block::default()
+            .title("View Notes")
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(Color::White));
         let paragraph = Paragraph::new("No notes found.")
             .block(block)
-            .style(Style::default().fg(Color::Yellow));
-        let rect = centered_rect(60, 5, area);
-        frame.render_widget(paragraph, rect);
+            .style(Style::default().fg(Color::Yellow))
+            .alignment(Alignment::Center);
+        frame.render_widget(paragraph, area);
         return;
     }
 
     let mut items = Vec::new();
     for note in &app.notes {
-        let title_str = format!(
+        let text = format!(
             "ID: {} | Title: {} | Content (truncated): {}",
             note.id,
             note.title,
             note.content.chars().take(30).collect::<String>()
         );
-        items.push(ListItem::new(title_str));
+        items.push(ListItem::new(Span::raw(text)));
     }
+
+    let block = Block::default().title("View Notes").borders(Borders::ALL);
     let list = List::new(items)
-        .block(Block::default().borders(Borders::ALL).title("View Notes"))
+        .block(block)
         .style(Style::default().fg(Color::White));
 
-    let rect = centered_rect(80, 20, area);
-    frame.render_widget(list, rect);
+    frame.render_widget(list, area);
 }
 
-/// Draws a note editor (for both create + edit).
-fn draw_note_editor<B: Backend>(frame: &mut Frame<B>, app: &App, area: Rect) {
+fn draw_note_editor(frame: &mut Frame, app: &App, area: Rect) {
     let title = if app.screen == Screen::CreateNote {
-        "Create Note (Esc=Save, F2=Discard)"
+        "Create Note (Esc=save, F2=discard)"
     } else {
-        "Edit Note (Esc=Save, F2=Discard)"
+        "Edit Note (Esc=save, F2=discard)"
     };
-
-    let block = Block::default().borders(Borders::ALL).title(title);
-
+    let block = Block::default().title(title).borders(Borders::ALL);
     let paragraph = Paragraph::new(app.edit_state.buffer.as_str())
         .block(block)
+        .alignment(Alignment::Left)
         .style(Style::default().fg(Color::Green));
 
-    let rect = centered_rect(60, 15, area);
-    frame.render_widget(paragraph, rect);
+    frame.render_widget(paragraph, area);
 }
 
-/// Draws a simple input box (Delete note by ID, open note by ID, etc.).
-fn draw_simple_input<B: Backend>(frame: &mut Frame<B>, app: &App, area: Rect) {
+fn draw_simple_input(frame: &mut Frame, app: &App, area: Rect) {
     let title = match app.screen {
-        Screen::DeleteNote => "Enter note ID to delete (ENTER=confirm, ESC=cancel)",
-        Screen::OpenNote => "Enter note ID to open (ENTER=confirm, ESC=cancel)",
-        Screen::DeleteAll => "Are you sure? Type YES to confirm (ENTER=confirm, ESC=cancel)",
+        Screen::DeleteNote => "Enter Note ID to delete (ENTER=confirm, ESC=cancel)",
+        Screen::OpenNote => "Enter Note ID to open (ENTER=confirm, ESC=cancel)",
+        Screen::DeleteAll => "Type YES to confirm (ENTER=confirm, ESC=cancel)",
         _ => "",
     };
 
-    let block = Block::default().borders(Borders::ALL).title(title);
+    let block = Block::default().title(title).borders(Borders::ALL);
     let paragraph = Paragraph::new(app.input_buffer.as_str())
         .block(block)
-        .style(Style::default().fg(Color::Yellow));
+        .style(Style::default().fg(Color::Yellow))
+        .alignment(Alignment::Left);
 
-    let rect = centered_rect(60, 3, area);
-    frame.render_widget(paragraph, rect);
+    frame.render_widget(paragraph, area);
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -441,27 +442,27 @@ fn handle_key_event(key_event: KeyEvent, app: &mut App) -> Result<()> {
     match app.screen {
         Screen::PasswordPrompt => match key_event.code {
             KeyCode::Enter => {
-                // 1) Derive key
+                // Derive key
                 app.password = app.input_buffer.clone();
                 app.input_buffer.clear();
                 app.key = derive_key_from_password(&app.password, SALT, PBKDF2_ITERATIONS)?;
 
-                // 2) Try loading existing notes
+                // Try loading notes
                 if let Ok(notes) = load_notes(&app.file_path, &app.key) {
                     app.notes = notes;
                 }
                 app.screen = Screen::Menu;
             }
-            KeyCode::Char(c) => {
-                // Normally you'd mask with '*'
-                app.input_buffer.push(c);
+            KeyCode::Esc => {
+                // Exit
+                app.screen = Screen::Exit;
             }
             KeyCode::Backspace => {
                 app.input_buffer.pop();
             }
-            KeyCode::Esc => {
-                // If user presses Esc at password prompt, exit
-                app.screen = Screen::Exit;
+            KeyCode::Char(c) => {
+                // For real usage, consider masking with '*'
+                app.input_buffer.push(c);
             }
             _ => {}
         },
@@ -473,7 +474,7 @@ fn handle_key_event(key_event: KeyEvent, app: &mut App) -> Result<()> {
                 app.screen = Screen::CreateNote;
             }
             KeyCode::Char('3') => {
-                // Prompt for note ID first
+                // Prompt for note ID
                 app.input_buffer.clear();
                 app.edit_state.note_id = None;
                 app.screen = Screen::EditNote;
@@ -490,20 +491,18 @@ fn handle_key_event(key_event: KeyEvent, app: &mut App) -> Result<()> {
                 app.input_buffer.clear();
                 app.screen = Screen::DeleteAll;
             }
-            KeyCode::Char('7') => {
-                app.screen = Screen::Exit;
-            }
+            KeyCode::Char('7') => app.screen = Screen::Exit,
             _ => {}
         },
         Screen::ViewNotes => {
-            // On Enter/Esc, go back to main menu
-            if matches!(key_event.code, KeyCode::Esc | KeyCode::Enter) {
+            // On Enter/Esc, go back to menu
+            if matches!(key_event.code, KeyCode::Enter | KeyCode::Esc) {
                 app.screen = Screen::Menu;
             }
         }
         Screen::CreateNote => match key_event.code {
             KeyCode::Esc => {
-                // Save the new note
+                // Save
                 let new_note = Note {
                     id: generate_user_friendly_id(),
                     title: "(Untitled)".to_string(),
@@ -513,28 +512,22 @@ fn handle_key_event(key_event: KeyEvent, app: &mut App) -> Result<()> {
                 save_notes(&app.file_path, &app.notes, &app.key)?;
                 app.screen = Screen::Menu;
             }
-            KeyCode::F(n) if n == 2 => {
+            KeyCode::F(2) => {
                 // Discard
                 app.screen = Screen::Menu;
-            }
-            KeyCode::Char(c) => {
-                app.edit_state.buffer.push(c);
             }
             KeyCode::Backspace => {
                 app.edit_state.buffer.pop();
             }
+            KeyCode::Char(c) => {
+                app.edit_state.buffer.push(c);
+            }
             _ => {}
         },
         Screen::EditNote => {
+            // If we don't yet have a note_id, we're prompting for it
             if app.edit_state.note_id.is_none() {
-                // Expecting a note ID
                 match key_event.code {
-                    KeyCode::Char(c) => {
-                        app.input_buffer.push(c);
-                    }
-                    KeyCode::Backspace => {
-                        app.input_buffer.pop();
-                    }
                     KeyCode::Enter => {
                         let id = app.input_buffer.trim().to_string();
                         app.input_buffer.clear();
@@ -542,16 +535,22 @@ fn handle_key_event(key_event: KeyEvent, app: &mut App) -> Result<()> {
                             app.edit_state.note_id = Some(note.id.clone());
                             app.edit_state.buffer = note.content.clone();
                         } else {
-                            app.error_message = "Note ID not found.".to_string();
+                            app.error_message = format!("Note ID {id} not found.");
                         }
                     }
                     KeyCode::Esc => {
                         app.screen = Screen::Menu;
                     }
+                    KeyCode::Backspace => {
+                        app.input_buffer.pop();
+                    }
+                    KeyCode::Char(c) => {
+                        app.input_buffer.push(c);
+                    }
                     _ => {}
                 }
             } else {
-                // We are editing the note content
+                // We have note_id, so we're editing the content
                 match key_event.code {
                     KeyCode::Esc => {
                         // Save changes
@@ -567,29 +566,23 @@ fn handle_key_event(key_event: KeyEvent, app: &mut App) -> Result<()> {
                         // Discard changes
                         app.screen = Screen::Menu;
                     }
-                    KeyCode::Char(c) => {
-                        app.edit_state.buffer.push(c);
-                    }
                     KeyCode::Backspace => {
                         app.edit_state.buffer.pop();
+                    }
+                    KeyCode::Char(c) => {
+                        app.edit_state.buffer.push(c);
                     }
                     _ => {}
                 }
             }
         }
         Screen::DeleteNote => match key_event.code {
-            KeyCode::Char(c) => {
-                app.input_buffer.push(c);
-            }
-            KeyCode::Backspace => {
-                app.input_buffer.pop();
-            }
             KeyCode::Enter => {
                 let id = app.input_buffer.trim();
                 let old_len = app.notes.len();
                 app.notes.retain(|n| n.id != id);
                 if app.notes.len() == old_len {
-                    app.error_message = "No note found with that ID.".to_string();
+                    app.error_message = format!("No note found with ID {id}.");
                 } else {
                     save_notes(&app.file_path, &app.notes, &app.key)?;
                 }
@@ -599,22 +592,22 @@ fn handle_key_event(key_event: KeyEvent, app: &mut App) -> Result<()> {
             KeyCode::Esc => {
                 app.screen = Screen::Menu;
             }
-            _ => {}
-        },
-        Screen::OpenNote => match key_event.code {
-            KeyCode::Char(c) => {
-                app.input_buffer.push(c);
-            }
             KeyCode::Backspace => {
                 app.input_buffer.pop();
             }
+            KeyCode::Char(c) => {
+                app.input_buffer.push(c);
+            }
+            _ => {}
+        },
+        Screen::OpenNote => match key_event.code {
             KeyCode::Enter => {
                 let id = app.input_buffer.trim();
                 if let Some(n) = app.notes.iter().find(|x| x.id == id) {
-                    // Show full note content in the error area (quick way to display it)
+                    // Place the full content in error_message as a quick display
                     app.error_message = format!("Full Note: {}", n.content);
                 } else {
-                    app.error_message = "Note not found.".to_string();
+                    app.error_message = format!("No note found with ID {id}.");
                 }
                 app.input_buffer.clear();
                 app.screen = Screen::Menu;
@@ -622,15 +615,15 @@ fn handle_key_event(key_event: KeyEvent, app: &mut App) -> Result<()> {
             KeyCode::Esc => {
                 app.screen = Screen::Menu;
             }
-            _ => {}
-        },
-        Screen::DeleteAll => match key_event.code {
-            KeyCode::Char(c) => {
-                app.input_buffer.push(c);
-            }
             KeyCode::Backspace => {
                 app.input_buffer.pop();
             }
+            KeyCode::Char(c) => {
+                app.input_buffer.push(c);
+            }
+            _ => {}
+        },
+        Screen::DeleteAll => match key_event.code {
             KeyCode::Enter => {
                 let confirm = app.input_buffer.trim();
                 if confirm == "YES" {
@@ -645,6 +638,12 @@ fn handle_key_event(key_event: KeyEvent, app: &mut App) -> Result<()> {
             KeyCode::Esc => {
                 app.screen = Screen::Menu;
             }
+            KeyCode::Backspace => {
+                app.input_buffer.pop();
+            }
+            KeyCode::Char(c) => {
+                app.input_buffer.push(c);
+            }
             _ => {}
         },
         Screen::Exit => {}
@@ -653,36 +652,7 @@ fn handle_key_event(key_event: KeyEvent, app: &mut App) -> Result<()> {
 }
 
 ////////////////////////////////////////////////////////////////////////////////
-// Layout Helpers
-////////////////////////////////////////////////////////////////////////////////
-
-fn centered_rect(percent_x: u16, height: u16, r: Rect) -> Rect {
-    let popup_layout = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints(
-            [
-                Constraint::Percentage((100 - height) / 2),
-                Constraint::Length(height),
-                Constraint::Percentage((100 - height) / 2),
-            ]
-            .as_ref(),
-        )
-        .split(r);
-
-    let middle = popup_layout[1];
-    let popup_width = middle.width * percent_x / 100;
-    let margin_x = (middle.width.saturating_sub(popup_width)) / 2;
-
-    Rect {
-        x: middle.x + margin_x,
-        y: middle.y,
-        width: popup_width,
-        height: middle.height,
-    }
-}
-
-////////////////////////////////////////////////////////////////////////////////
-// Encryption & Persistence
+// Encryption + Persistence
 ////////////////////////////////////////////////////////////////////////////////
 
 fn derive_key_from_password(password: &str, salt: &[u8], iterations: u32) -> Result<[u8; 32]> {
@@ -702,7 +672,6 @@ fn encrypt_data(plaintext: &[u8], key: &[u8]) -> Result<Vec<u8>> {
         aead::UnboundKey::new(&aead::CHACHA20_POLY1305, key)
             .map_err(|_| anyhow!("Failed to create encryption key"))?,
     );
-
     let rng = ring_rand::SystemRandom::new();
     let nonce_bytes = ring_rand::generate::<[u8; 12]>(&rng)
         .map_err(|_| anyhow!("Failed to generate nonce"))?
@@ -711,7 +680,6 @@ fn encrypt_data(plaintext: &[u8], key: &[u8]) -> Result<Vec<u8>> {
 
     let mut in_out = plaintext.to_vec();
     in_out.resize(in_out.len() + sealing_key.algorithm().tag_len(), 0);
-
     sealing_key
         .seal_in_place_append_tag(nonce, aead::Aad::empty(), &mut in_out)
         .map_err(|_| anyhow!("Encryption failed"))?;
@@ -727,8 +695,8 @@ fn decrypt_data(ciphertext: &[u8], key: &[u8]) -> Result<Vec<u8>> {
         return Err(anyhow!("Ciphertext too short"));
     }
     let (nonce_bytes, encrypted) = ciphertext.split_at(12);
-    let nonce =
-        aead::Nonce::try_assume_unique_for_key(nonce_bytes).map_err(|_| anyhow!("Invalid nonce"))?;
+    let nonce = aead::Nonce::try_assume_unique_for_key(nonce_bytes)
+        .map_err(|_| anyhow!("Invalid nonce"))?;
 
     let opening_key = aead::LessSafeKey::new(
         aead::UnboundKey::new(&aead::CHACHA20_POLY1305, key)
@@ -744,8 +712,7 @@ fn decrypt_data(ciphertext: &[u8], key: &[u8]) -> Result<Vec<u8>> {
 
 fn load_notes<P: AsRef<Path>>(path: P, key: &[u8]) -> Result<Vec<Note>> {
     if !path.as_ref().exists() {
-        // Not necessarily an error; just return empty list
-        return Ok(Vec::new());
+        return Ok(Vec::new()); // No file yet -> empty list
     }
     let mut file = OpenOptions::new().read(true).open(path)?;
     let mut ciphertext = Vec::new();

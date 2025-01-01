@@ -2,8 +2,16 @@
 name = "weather-cli"
 version = "0.1.0"
 edition = "2021"
+description = "Ratatui-based Weather CLI"
+license = "MIT"
+repository = "https://github.com/dunamismax/Rust"
+documentation = "https://github.com/dunamismax/Rust/Code/weather-cli"
+readme = "README.md"
+keywords = ["weather", "cli", "ratatui"]
+categories = ["command-line-utilities", "text-user-interface"]
 
 [dependencies]
+# Networking and data
 reqwest = { version = "*", features = ["blocking", "json"] }
 serde = { version = "*", features = ["derive"] }
 serde_json = "*"
@@ -11,9 +19,17 @@ anyhow = "*"
 dotenv = "*"
 chrono = "*"
 figlet-rs = "*"
-rand = "*"
-ratatui = "*"
-tokio = { version = "*", features = ["full"] }
-crossterm = "*"
+
+# CLI + TUI
 clap = { version = "*", features = ["derive"] }
-tui = "*"
+tokio = { version = "*", features = ["full"] }
+ratatui = "*"
+crossterm = "*"
+
+# Only keep "rand" if you're actually using it
+rand = "*"
+
+[profile.release]
+opt-level = 3
+debug = false
+lto = true

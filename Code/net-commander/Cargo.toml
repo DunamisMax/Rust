@@ -2,10 +2,24 @@
 name = "net-commander"
 version = "0.1.0"
 edition = "2021"
+description = "A TUI-based network exploration CLI using Clap, Crossterm, Ratatui, and Tokio."
+license = "MIT"
+repository = "https://github.com/dunamismax/Rust"
+readme = "README.md"
+homepage = "https://github.com/dunamismax/Rust"
+documentation = "https://github.com/dunamismax/Rust/Code/net-commander"
+keywords = ["tui", "rust", "network", "cli"]
+categories = ["command-line-utilities", "text-user-interface"]
 
 [dependencies]
-tokio = { version = "*", features = ["full"] }
+anyhow = "*"
 crossterm = "*"
 clap = { version = "*", features = ["derive"] }
-tui = "*"
-anyhow = "*"
+tokio = { version = "*", features = ["full"] }
+ratatui = "*"
+
+[profile.release]
+# For optimized performance in release builds:
+opt-level = 3
+debug = false
+lto = true

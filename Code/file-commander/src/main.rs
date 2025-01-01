@@ -1,32 +1,35 @@
 ////////////////////////////////////////////////////////////////////////////////
-// File Commander - TUI Version with Tokio, Clap, crossterm, and tui
+// File Commander - Rewritten with Ratatui Welcome Screen & Strict Guidelines
 ////////////////////////////////////////////////////////////////////////////////
 
 ////////////////////////////////////////////////////////////////////////////////
 // Imports
 ////////////////////////////////////////////////////////////////////////////////
 
-use std::{
-    error::Error,
-    fs, io,
-    io::Write,
-    path::{Path, PathBuf},
-};
-
+use anyhow::{Context, Result};
 use chrono::{DateTime, Local};
 use clap::Parser;
 use crossterm::{
+    cursor::MoveTo,
     event::{self, Event, KeyCode, KeyModifiers},
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, Clear, ClearType},
 };
-use tui::{
+use rand;
+use ratatui::{
     backend::CrosstermBackend,
-    layout::{Constraint, Direction, Layout},
+    layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
-    text::{Span, Spans},
+    text::{Line, Span},
     widgets::{Block, Borders, List, ListItem, Paragraph},
-    Terminal,
+    Frame, Terminal,
+};
+use rayon;
+use std::{
+    fs, io,
+    io::Write,
+    path::{Path, PathBuf},
+    time::Duration,
 };
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -35,7 +38,6 @@ use tui::{
 
 #[cfg(windows)]
 const LINE_ENDING: &str = "\r\n";
-
 #[cfg(not(windows))]
 const LINE_ENDING: &str = "\n";
 
@@ -47,7 +49,7 @@ const LINE_ENDING: &str = "\n";
 #[command(
     author,
     version,
-    about = "File Commander TUI - Demonstration of file ops with crossterm+tui",
+    about = "File Commander TUI - Demonstration of file ops with crossterm+ratatui",
     long_about = None
 )]
 struct CliArgs {
@@ -57,31 +59,49 @@ struct CliArgs {
 }
 
 ////////////////////////////////////////////////////////////////////////////////
-// Type Aliases / Errors
+// RAII Guard for Raw Mode
 ////////////////////////////////////////////////////////////////////////////////
 
-type DynError = Box<dyn Error + Send + Sync + 'static>;
+/// Enables raw mode upon creation and disables it when dropped.
+struct RawModeGuard {
+    active: bool,
+}
+
+impl RawModeGuard {
+    fn new() -> Result<Self> {
+        enable_raw_mode().context("Unable to enable raw mode")?;
+        Ok(Self { active: true })
+    }
+}
+
+impl Drop for RawModeGuard {
+    fn drop(&mut self) {
+        if self.active {
+            let _ = disable_raw_mode();
+        }
+    }
+}
 
 ////////////////////////////////////////////////////////////////////////////////
-// State
+// Application State
 ////////////////////////////////////////////////////////////////////////////////
 
-/// Tracks the current state of the TUI application.
+/// Tracks the current state of the File Commander TUI application.
 struct AppState {
-    /// Current directory context
+    /// The current working directory
     current_dir: PathBuf,
-    /// Lines to display in our "log" output at the bottom
+    /// The scrolling log that is displayed at the bottom
     log_lines: Vec<String>,
-    /// Index of currently highlighted menu item
+    /// The index of the currently highlighted menu item
     menu_index: usize,
-    /// The main menu items
+    /// The menu items
     menu_items: Vec<&'static str>,
 }
 
 impl AppState {
-    fn new() -> Result<Self, DynError> {
+    fn new() -> Result<Self> {
         Ok(Self {
-            current_dir: std::env::current_dir()?,
+            current_dir: std::env::current_dir().context("Failed to get current directory")?,
             log_lines: Vec::new(),
             menu_index: 0,
             menu_items: vec![
@@ -103,66 +123,202 @@ impl AppState {
 }
 
 ////////////////////////////////////////////////////////////////////////////////
-// Main (Tokio) Entry Point
+// Main (Tokio) Entry
 ////////////////////////////////////////////////////////////////////////////////
 
 #[tokio::main]
-async fn main() -> Result<(), DynError> {
+async fn main() -> Result<()> {
+    // 1) Parse CLI arguments
     let args = CliArgs::parse();
     if args.verbose {
         print!("Verbose mode enabled...{}", LINE_ENDING);
     }
 
-    // Enable raw mode for TUI
-    enable_raw_mode()?;
-    let stdout = io::stdout();
+    // 2) Enable raw mode (RAII)
+    let _raw_guard = RawModeGuard::new().context("Failed to enable raw mode")?;
 
-    // Construct a CrosstermBackend for tui (no mouse capture here)
-    let backend = CrosstermBackend::new(stdout);
-    let mut terminal = Terminal::new(backend)?;
-
-    // 1) Clear the screen for a clean start
+    // 3) Create Terminal & clear screen
+    let mut terminal = setup_terminal().context("Failed to create terminal")?;
     clear_screen(&mut terminal)?;
 
-    // Print a quick status message (if you'd like)
-    print!("CLI started successfully!{}", LINE_ENDING);
+    // 4) Draw the welcome TUI
+    draw_welcome_screen(&mut terminal).context("Failed to draw welcome screen")?;
 
-    // Create our app state
-    let mut app_state = AppState::new()?;
+    // 5) Temporarily drop raw mode to allow optional interactive pause
+    drop(_raw_guard);
 
-    // 2) Enter the TUI event loop
-    let res = run_app(&mut terminal, &mut app_state);
+    //    (Optional) Wait for user to press Enter to proceed
+    //    If you don't want a pause, you can remove these lines:
+    println!("{}", LINE_ENDING); // Extra blank lines for spacing
+    println!("{}", LINE_ENDING);
 
-    // 3) On exit, restore normal terminal mode
-    disable_raw_mode()?;
+    print!("Press Enter to launch File Commander...{}", LINE_ENDING);
+    io::stdout().flush()?;
+    let mut buf = String::new();
+    io::stdin().read_line(&mut buf)?;
 
-    // Optionally clear screen on exit and say goodbye
-    execute!(
-        terminal.backend_mut(),
-        Clear(ClearType::All),
-        crossterm::cursor::MoveTo(0, 0)
-    )?;
-    print!("Goodbye!{}", LINE_ENDING);
+    // 6) Re-enable raw mode for the main TUI loop
+    let _raw_guard = RawModeGuard::new().context("Failed to re-enable raw mode")?;
 
-    if let Err(e) = res {
+    // 7) Clear screen and create a fresh Terminal again
+    let mut terminal = setup_terminal().context("Failed to create terminal")?;
+    clear_screen(&mut terminal)?;
+
+    // 8) Create our AppState
+    let mut app_state = AppState::new().context("Failed to initialize AppState")?;
+
+    // 9) Enter the main event loop
+    if let Err(e) = run_app(&mut terminal, &mut app_state) {
+        drop(_raw_guard); // Force raw mode off in case of error
+                          // Clear the screen on exit for cleanliness
+        execute!(terminal.backend_mut(), Clear(ClearType::All), MoveTo(0, 0))?;
         eprintln!("Error: {e}");
+        return Ok(());
     }
+
+    // 10) TUI loop ended. Drop raw mode.
+    drop(_raw_guard);
+
+    // 11) Clear the screen and say goodbye
+    execute!(terminal.backend_mut(), Clear(ClearType::All), MoveTo(0, 0))?;
+    print!("Goodbye!{}", LINE_ENDING);
 
     Ok(())
 }
 
 ////////////////////////////////////////////////////////////////////////////////
-// TUI: Main Event-Loop
+// Setup Terminal & Clear
 ////////////////////////////////////////////////////////////////////////////////
 
-fn run_app<B: tui::backend::Backend>(
-    terminal: &mut Terminal<B>,
+fn setup_terminal() -> Result<Terminal<CrosstermBackend<std::io::Stdout>>> {
+    let backend = CrosstermBackend::new(io::stdout());
+    let terminal = Terminal::new(backend).context("Failed to initialize ratatui Terminal")?;
+    Ok(terminal)
+}
+
+fn clear_screen(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>) -> Result<()> {
+    terminal.clear()?;
+    Ok(())
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// TUI: Draw "Welcome" Screen
+////////////////////////////////////////////////////////////////////////////////
+
+/// Draws a basic welcome message with instructions, centered on screen.
+fn draw_welcome_screen(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>) -> Result<()> {
+    terminal.draw(|frame| {
+        let size = frame.area();
+
+        // Layout: top banner, then main area
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Length(5), Constraint::Min(0)].as_ref())
+            .split(size);
+
+        // Draw a top banner
+        draw_banner(frame, chunks[0]);
+
+        // Center a welcome text box in the remaining space
+        let centered = centered_rect(60, 40, chunks[1]);
+
+        let lines = vec![
+            Line::from(Span::styled(
+                "Welcome to File Commander!",
+                Style::default()
+                    .fg(Color::Green)
+                    .add_modifier(Modifier::BOLD),
+            )),
+            Line::from(""),
+            Line::from(Span::styled(
+                "Press Enter to proceed to the main TUI...",
+                Style::default().fg(Color::Yellow),
+            )),
+        ];
+
+        let paragraph = Paragraph::new(lines).alignment(Alignment::Center).block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(" Welcome ")
+                .border_style(Style::default().fg(Color::Green)),
+        );
+
+        frame.render_widget(paragraph, centered);
+    })?;
+    Ok(())
+}
+
+/// Draw a banner along the top of the screen.
+fn draw_banner(frame: &mut Frame<CrosstermBackend<std::io::Stdout>>, area: Rect) {
+    let line1 = Line::from(Span::styled(
+        "FILE COMMANDER",
+        Style::default()
+            .fg(Color::Magenta)
+            .add_modifier(Modifier::BOLD),
+    ));
+    let line2 = Line::from("A TUI-based file management tool");
+
+    let paragraph = Paragraph::new(vec![line1, line2])
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(" Banner ")
+                .border_style(Style::default().fg(Color::Magenta)),
+        )
+        .alignment(Alignment::Center);
+
+    frame.render_widget(paragraph, area);
+}
+
+/// Helper: center a sub-rectangle (rect_width%, rect_height%) within a given area.
+fn centered_rect(rect_width: u16, rect_height: u16, area: Rect) -> Rect {
+    let Layout { .. } = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints(
+            [
+                Constraint::Percentage((100 - rect_height) / 2),
+                Constraint::Percentage(rect_height),
+                Constraint::Percentage((100 - rect_height) / 2),
+            ]
+            .as_ref(),
+        )
+        .split(area);
+
+    let middle_area = Rect {
+        x: area.x,
+        y: area.y + (area.height.saturating_sub(rect_height) / 2),
+        width: area.width,
+        height: area.height,
+    };
+
+    let box_width = middle_area.width.saturating_mul(rect_width) / 100;
+    let box_height = middle_area.height.saturating_mul(rect_height) / 100;
+    let x_offset = middle_area.x + (middle_area.width.saturating_sub(box_width)) / 2;
+    let y_offset = middle_area.y + (middle_area.height.saturating_sub(box_height)) / 2;
+
+    Rect {
+        x: x_offset,
+        y: y_offset,
+        width: box_width,
+        height: box_height,
+    }
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// TUI: Main Event Loop
+////////////////////////////////////////////////////////////////////////////////
+
+fn run_app(
+    terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>,
     app_state: &mut AppState,
-) -> Result<(), DynError> {
+) -> Result<()> {
     loop {
-        // Draw the UI
+        // Render
         terminal.draw(|frame| {
-            // Split the screen vertically into top/middle/bottom
+            let size = frame.area();
+
+            // We’ll place the top instructions in a small region,
+            // then the menu, then the log lines at the bottom.
             let chunks = Layout::default()
                 .direction(Direction::Vertical)
                 .constraints([
@@ -170,23 +326,24 @@ fn run_app<B: tui::backend::Backend>(
                     Constraint::Length(14), // menu area
                     Constraint::Min(10),    // log area
                 ])
-                .split(frame.size());
+                .split(size);
 
-            // (1) Top pane: Title + instructions
+            // --- (1) Top Pane: Display instructions and current directory
             let top_text = vec![
-                Spans::from(Span::styled(
-                    "file-commander",
+                Line::from(Span::styled(
+                    "FILE COMMANDER",
                     Style::default()
                         .fg(Color::Cyan)
                         .add_modifier(Modifier::BOLD),
                 )),
-                Spans::from("Use Up/Down arrows to navigate, Enter to select."),
-                Spans::from("Press 'q' to exit at any time, or Ctrl+C."),
-                Spans::from(format!(
+                Line::from("Use Up/Down arrows to navigate, Enter to select."),
+                Line::from("Press 'q' to exit at any time, or Ctrl+C."),
+                Line::from(format!(
                     "Current directory: {}",
                     app_state.current_dir.display()
                 )),
             ];
+
             let top_paragraph = Paragraph::new(top_text).block(
                 Block::default()
                     .borders(Borders::ALL)
@@ -194,7 +351,7 @@ fn run_app<B: tui::backend::Backend>(
             );
             frame.render_widget(top_paragraph, chunks[0]);
 
-            // (2) Middle pane: Menu
+            // --- (2) Middle Pane: Menu
             let items: Vec<ListItem> = app_state
                 .menu_items
                 .iter()
@@ -205,26 +362,28 @@ fn run_app<B: tui::backend::Backend>(
                     } else {
                         Style::default().fg(Color::White)
                     };
-                    ListItem::new(Span::styled(title, style))
+                    ListItem::new(Line::from(Span::styled(title, style)))
                 })
                 .collect();
+
             let menu =
                 List::new(items).block(Block::default().borders(Borders::ALL).title(" Menu "));
             frame.render_widget(menu, chunks[1]);
 
-            // (3) Bottom pane: Log output
+            // --- (3) Bottom Pane: Log output
             let log_items: Vec<ListItem> = app_state
                 .log_lines
                 .iter()
-                .map(|line| ListItem::new(line.clone()))
+                .map(|line| ListItem::new(Line::from(line.as_str())))
                 .collect();
+
             let log_widget =
                 List::new(log_items).block(Block::default().borders(Borders::ALL).title(" Log "));
             frame.render_widget(log_widget, chunks[2]);
         })?;
 
-        // Handle input (non-blocking poll + read)
-        if crossterm::event::poll(std::time::Duration::from_millis(100))? {
+        // Check for input
+        if crossterm::event::poll(Duration::from_millis(100))? {
             if let Event::Key(key_event) = event::read()? {
                 match (key_event.code, key_event.modifiers) {
                     // Press 'q' to exit
@@ -234,7 +393,7 @@ fn run_app<B: tui::backend::Backend>(
                             .push("Exiting File Commander. Goodbye!".to_string());
                         return Ok(());
                     }
-                    // Up/Down arrow to navigate
+                    // Up/Down to navigate
                     (KeyCode::Up, _) => {
                         if app_state.menu_index > 0 {
                             app_state.menu_index -= 1;
@@ -269,7 +428,7 @@ fn run_app<B: tui::backend::Backend>(
                             _ => {}
                         }
                     }
-                    // Ctrl+C to exit quickly
+                    // Ctrl + C to exit quickly
                     (KeyCode::Char('c'), KeyModifiers::CONTROL) => {
                         app_state
                             .log_lines
@@ -284,23 +443,11 @@ fn run_app<B: tui::backend::Backend>(
 }
 
 ////////////////////////////////////////////////////////////////////////////////
-// Clear Screen
-////////////////////////////////////////////////////////////////////////////////
-
-/// Clears the terminal screen for a clean start using tui.
-fn clear_screen(
-    terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>,
-) -> Result<(), DynError> {
-    terminal.clear()?;
-    Ok(())
-}
-
-////////////////////////////////////////////////////////////////////////////////
-// Menu Actions
+// Menu Action Handlers
 ////////////////////////////////////////////////////////////////////////////////
 
 /// 1) Change directory (cd).
-fn change_directory(app_state: &mut AppState) -> Result<(), DynError> {
+fn change_directory(app_state: &mut AppState) -> Result<()> {
     let path = read_user_input("Enter path to change directory: ")?;
     let trimmed = path.trim();
     if trimmed.is_empty() {
@@ -317,7 +464,7 @@ fn change_directory(app_state: &mut AppState) -> Result<(), DynError> {
     };
 
     if target.is_dir() {
-        app_state.current_dir = target.canonicalize()?;
+        app_state.current_dir = target.canonicalize().context("canonicalize() failed")?;
         app_state
             .log_lines
             .push(format!("Directory changed to {:?}", app_state.current_dir));
@@ -329,13 +476,13 @@ fn change_directory(app_state: &mut AppState) -> Result<(), DynError> {
     Ok(())
 }
 
-/// 2) List directory contents, similar to `ls`.
-fn list_contents(app_state: &mut AppState) -> Result<(), DynError> {
+/// 2) List directory contents.
+fn list_contents(app_state: &mut AppState) -> Result<()> {
     let show_hidden = read_user_input("Show hidden files? (y/n): ")?;
     let show_hidden = matches_yes(&show_hidden);
 
     let dir = &app_state.current_dir;
-    let entries = fs::read_dir(dir)?;
+    let entries = fs::read_dir(dir).context("read_dir failed")?;
     app_state.log_lines.push(format!("Contents of {:?}:", dir));
 
     for entry in entries.flatten() {
@@ -349,7 +496,7 @@ fn list_contents(app_state: &mut AppState) -> Result<(), DynError> {
 }
 
 /// 3) Show all files/folders in a tree view.
-fn show_tree_view(app_state: &mut AppState) -> Result<(), DynError> {
+fn show_tree_view(app_state: &mut AppState) -> Result<()> {
     let path = read_user_input(&format!(
         "Enter directory path for tree view (default: {}): ",
         app_state.current_dir.display()
@@ -374,11 +521,7 @@ fn show_tree_view(app_state: &mut AppState) -> Result<(), DynError> {
     Ok(())
 }
 
-fn print_directory_tree(
-    dir: &Path,
-    level: usize,
-    app_state: &mut AppState,
-) -> Result<(), DynError> {
+fn print_directory_tree(dir: &Path, level: usize, app_state: &mut AppState) -> Result<()> {
     let indent = "  ".repeat(level);
     let dir_name = dir
         .file_name()
@@ -389,9 +532,10 @@ fn print_directory_tree(
         .log_lines
         .push(format!("{}- {}", indent, dir_name));
 
-    let entries = fs::read_dir(dir)?;
+    let entries = fs::read_dir(dir).context("read_dir failed")?;
     let mut dirs = Vec::new();
     let mut files = Vec::new();
+
     for entry in entries.flatten() {
         let path = entry.path();
         if path.is_dir() {
@@ -400,10 +544,10 @@ fn print_directory_tree(
             files.push(path);
         }
     }
-    for d in &dirs {
-        print_directory_tree(d, level + 1, app_state)?;
+    for d in dirs {
+        print_directory_tree(&d, level + 1, app_state)?;
     }
-    for f in &files {
+    for f in files {
         let file_name = f.file_name().unwrap_or_default().to_string_lossy();
         app_state
             .log_lines
@@ -413,7 +557,7 @@ fn print_directory_tree(
 }
 
 /// 4) Show directory info.
-fn show_directory_info(app_state: &mut AppState) -> Result<(), DynError> {
+fn show_directory_info(app_state: &mut AppState) -> Result<()> {
     let path = read_user_input(&format!(
         "Enter directory path for info (default: {}): ",
         app_state.current_dir.display()
@@ -460,16 +604,16 @@ fn show_directory_info(app_state: &mut AppState) -> Result<(), DynError> {
     Ok(())
 }
 
-/// Recursively compute total size, file count, and directory count of a directory.
-fn compute_directory_stats(dir: &Path) -> Result<(u64, u64, u64), DynError> {
+/// Recursively compute total size, file count, and directory count.
+fn compute_directory_stats(dir: &Path) -> Result<(u64, u64, u64)> {
     let mut total_size = 0;
     let mut file_count = 0;
     let mut dir_count = 0;
 
-    for entry in fs::read_dir(dir)? {
+    for entry in fs::read_dir(dir).context("read_dir failed")? {
         let entry = entry?;
         let path = entry.path();
-        let meta = entry.metadata()?;
+        let meta = entry.metadata().context("metadata() failed")?;
 
         if path.is_dir() {
             dir_count += 1;
@@ -486,8 +630,8 @@ fn compute_directory_stats(dir: &Path) -> Result<(u64, u64, u64), DynError> {
     Ok((total_size, file_count, dir_count))
 }
 
-/// 5) Create a new file (touch).
-fn create_file(app_state: &mut AppState) -> Result<(), DynError> {
+/// 5) Create a new file.
+fn create_file(app_state: &mut AppState) -> Result<()> {
     let filename = read_user_input("Enter name of file to create: ")?;
     let trimmed = filename.trim();
     if trimmed.is_empty() {
@@ -516,8 +660,8 @@ fn create_file(app_state: &mut AppState) -> Result<(), DynError> {
     Ok(())
 }
 
-/// 6) Create a new directory (mkdir).
-fn create_directory(app_state: &mut AppState) -> Result<(), DynError> {
+/// 6) Create a new directory.
+fn create_directory(app_state: &mut AppState) -> Result<()> {
     let name = read_user_input("Enter name of directory to create: ")?;
     let trimmed = name.trim();
     if trimmed.is_empty() {
@@ -543,7 +687,7 @@ fn create_directory(app_state: &mut AppState) -> Result<(), DynError> {
 }
 
 /// 7) Copy file/directory (cp).
-fn copy_interactive(app_state: &mut AppState) -> Result<(), DynError> {
+fn copy_interactive(app_state: &mut AppState) -> Result<()> {
     let source = read_user_input("Enter source file/directory: ")?;
     let destination = read_user_input("Enter destination path: ")?;
 
@@ -575,7 +719,7 @@ fn copy_interactive(app_state: &mut AppState) -> Result<(), DynError> {
 }
 
 /// Recursively copy a directory and its contents.
-fn copy_directory_recursive(source: &Path, dest: &Path) -> Result<(), DynError> {
+fn copy_directory_recursive(source: &Path, dest: &Path) -> Result<()> {
     fs::create_dir_all(dest)?;
     for entry in fs::read_dir(source)? {
         let entry = entry?;
@@ -591,7 +735,7 @@ fn copy_directory_recursive(source: &Path, dest: &Path) -> Result<(), DynError> 
 }
 
 /// 8) Move/rename file/directory (mv).
-fn move_or_rename_interactive(app_state: &mut AppState) -> Result<(), DynError> {
+fn move_or_rename_interactive(app_state: &mut AppState) -> Result<()> {
     let source = read_user_input("Enter source file/directory: ")?;
     let dest = read_user_input("Enter new path/filename: ")?;
 
@@ -617,7 +761,7 @@ fn move_or_rename_interactive(app_state: &mut AppState) -> Result<(), DynError> 
 }
 
 /// 9) Delete file/directory (rm).
-fn delete_interactive(app_state: &mut AppState) -> Result<(), DynError> {
+fn delete_interactive(app_state: &mut AppState) -> Result<()> {
     let target = read_user_input("Enter file/directory to delete: ")?;
     let target_path = PathBuf::from(target.trim());
 
@@ -656,8 +800,8 @@ fn delete_interactive(app_state: &mut AppState) -> Result<(), DynError> {
     Ok(())
 }
 
-/// 10) Duplicate a file/directory quickly by adding `_copy` or similar suffix.
-fn duplicate_interactive(app_state: &mut AppState) -> Result<(), DynError> {
+/// 10) Duplicate file/directory with `_copy` suffix.
+fn duplicate_interactive(app_state: &mut AppState) -> Result<()> {
     let source = read_user_input("Enter file/directory to duplicate: ")?;
     let source_path = PathBuf::from(source.trim());
 
@@ -698,8 +842,8 @@ fn duplicate_interactive(app_state: &mut AppState) -> Result<(), DynError> {
     Ok(())
 }
 
-/// 11) Organize files (single-threaded).
-fn organize_files_interactive(app_state: &mut AppState) -> Result<(), DynError> {
+/// 11) Organize files (by extension/date/size).
+fn organize_files_interactive(app_state: &mut AppState) -> Result<()> {
     app_state
         .log_lines
         .push("=== Organize Files ===".to_string());
@@ -753,10 +897,10 @@ fn organize_files_interactive(app_state: &mut AppState) -> Result<(), DynError> 
     Ok(())
 }
 
-/// Recursively collects files (not directories) from the given directory.
-fn collect_files(dir: &Path) -> Result<Vec<fs::DirEntry>, io::Error> {
+/// Recursively collects files (not directories) in the given directory.
+fn collect_files(dir: &Path) -> Result<Vec<fs::DirEntry>> {
     let mut files = Vec::new();
-    for entry in fs::read_dir(dir)? {
+    for entry in fs::read_dir(dir).context("read_dir failed")? {
         let entry = entry?;
         let path = entry.path();
         if path.is_dir() {
@@ -773,7 +917,7 @@ fn organize_by_extension(
     root_dir: &Path,
     dry_run: bool,
     app_state: &mut AppState,
-) -> Result<(), DynError> {
+) -> Result<()> {
     let path = entry.path();
     if let Some(ext_os) = path.extension() {
         let extension = ext_os.to_string_lossy();
@@ -791,7 +935,7 @@ fn organize_by_date(
     root_dir: &Path,
     dry_run: bool,
     app_state: &mut AppState,
-) -> Result<(), DynError> {
+) -> Result<()> {
     let path = entry.path();
     let metadata = fs::metadata(&path)?;
     let file_time = metadata.created().or_else(|_| metadata.modified())?;
@@ -807,7 +951,7 @@ fn organize_by_size(
     root_dir: &Path,
     dry_run: bool,
     app_state: &mut AppState,
-) -> Result<(), DynError> {
+) -> Result<()> {
     let path = entry.path();
     let metadata = fs::metadata(&path)?;
     let file_size = metadata.len();
@@ -825,17 +969,19 @@ fn organize_by_size(
     Ok(())
 }
 
-/// Move file to target dir, or log a dry-run message.
+/// Move file to target dir, or log a dry-run message only.
 fn move_file_or_dry_run(
     path: &Path,
     target_dir: &Path,
     dry_run: bool,
     app_state: &mut AppState,
-) -> Result<(), DynError> {
+) -> Result<()> {
     if !dry_run {
         fs::create_dir_all(target_dir)?;
-        // Use `ok_or(...)` instead of `ok_or_else` to satisfy Clippy
-        let target_path = target_dir.join(path.file_name().ok_or("No filename found in path")?);
+        let target_path = target_dir.join(
+            path.file_name()
+                .ok_or_else(|| io::Error::new(io::ErrorKind::Other, "No filename found"))?,
+        );
         fs::rename(path, &target_path)?;
         app_state.log_lines.push(format!(
             "Moved {:?} to {:?}",
@@ -856,14 +1002,14 @@ fn move_file_or_dry_run(
 // Misc Helpers
 ////////////////////////////////////////////////////////////////////////////////
 
-/// Helper to interpret "y"/"yes" input as true, everything else as false.
+/// Interpret "y"/"yes" as true, otherwise false.
 fn matches_yes(input: &str) -> bool {
     let s = input.trim().to_lowercase();
     s == "y" || s == "yes"
 }
 
 /// A blocking function to read user input from stdin.
-fn read_user_input(prompt_msg: &str) -> Result<String, DynError> {
+fn read_user_input(prompt_msg: &str) -> Result<String> {
     print!("{prompt_msg}{}", LINE_ENDING);
     io::stdout().flush()?;
 

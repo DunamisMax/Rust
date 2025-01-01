@@ -1,22 +1,35 @@
 ////////////////////////////////////////////////////////////////////////////////
+// hello-world-cli - A Multilingual TUI w/ random greetings & ASCII art banner
+////////////////////////////////////////////////////////////////////////////////
+
+////////////////////////////////////////////////////////////////////////////////
 // Imports
 ////////////////////////////////////////////////////////////////////////////////
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use clap::Parser;
+use std::io::{self};
+use std::time::Duration;
+
 use crossterm::{
     event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyModifiers},
     execute,
-    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
+    terminal::{
+        disable_raw_mode, enable_raw_mode, Clear, ClearType, EnterAlternateScreen,
+        LeaveAlternateScreen,
+    },
 };
+
+use figlet_rs::FIGfont;
 use rand::{seq::SliceRandom, Rng};
-use std::{io, time::Duration};
-use tui::{
+
+use ratatui::{
     backend::CrosstermBackend,
     layout::{Alignment, Constraint, Direction, Layout, Rect},
-    style::{Color, Style},
+    style::{Color, Modifier, Style},
+    text::{Line, Span},
     widgets::{Block, Borders, Paragraph},
-    Terminal,
+    Frame, Terminal,
 };
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -34,7 +47,7 @@ const LINE_ENDING: &str = "\n";
 ////////////////////////////////////////////////////////////////////////////////
 
 #[derive(Parser, Debug)]
-#[command(author, version, about = "Multilingual Hello-World TUI", long_about = None)]
+#[command(author, version, about = "Multilingual Hello-World Ratatui App", long_about = None)]
 struct CliArgs {
     /// Optional flag for demonstration
     #[arg(long, short, help = "Enable verbose mode")]
@@ -42,13 +55,14 @@ struct CliArgs {
 }
 
 ////////////////////////////////////////////////////////////////////////////////
-// Application State
+// App State
 ////////////////////////////////////////////////////////////////////////////////
 
+/// Tracks the current user input and the generated greeting.
 struct App {
-    /// Current text input for "name"
+    /// The text the user has typed (for the name).
     input: String,
-    /// Current greeting displayed
+    /// The current greeting displayed.
     greeting: String,
 }
 
@@ -62,7 +76,31 @@ impl App {
 }
 
 ////////////////////////////////////////////////////////////////////////////////
-// Main (Tokio) Entry Point
+// RAII Guard for Raw Mode
+////////////////////////////////////////////////////////////////////////////////
+
+/// A simple guard that enables raw mode on creation, and disables it on drop.
+struct RawModeGuard {
+    active: bool,
+}
+
+impl RawModeGuard {
+    fn new() -> Result<Self> {
+        enable_raw_mode().context("Unable to enable raw mode")?;
+        Ok(Self { active: true })
+    }
+}
+
+impl Drop for RawModeGuard {
+    fn drop(&mut self) {
+        if self.active {
+            let _ = disable_raw_mode();
+        }
+    }
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// Main (Tokio) Entry
 ////////////////////////////////////////////////////////////////////////////////
 
 #[tokio::main]
@@ -73,94 +111,84 @@ async fn main() -> Result<()> {
         print!("Verbose mode enabled...{}", LINE_ENDING);
     }
 
-    // 2) Set up terminal in raw mode + alternate screen for TUI
-    enable_raw_mode()?;
+    // 2) Enable raw mode
+    let _raw_guard = RawModeGuard::new().context("Failed to enable raw mode")?;
+
+    // 3) Switch to an alternate screen buffer, enable mouse capture, and clear
     let mut stdout = io::stdout();
-    execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
-
+    execute!(
+        stdout,
+        EnterAlternateScreen,
+        EnableMouseCapture,
+        Clear(ClearType::All)
+    )?;
     let backend = CrosstermBackend::new(stdout);
-    let mut terminal = Terminal::new(backend)?;
+    let mut terminal = Terminal::new(backend).context("Failed to create terminal")?;
 
-    // 3) Run our TUI-driven event loop
-    let res = run_app(&mut terminal);
+    // 4) Draw an initial welcome TUI (with a FIGlet ASCII banner)
+    draw_welcome_screen(&mut terminal)?;
 
-    // 4) Restore terminal state
-    disable_raw_mode()?;
+    // 5) Run the TUI-driven event loop (user can type a name and see greetings)
+    run_app(&mut terminal).context("Error in TUI event loop")?;
 
-    // Drop the Terminal so we can safely get back to the raw stdout
-    let mut stdout = terminal.into_inner();
+    // 6) Restore terminal state:
+    //    - Drop the `Terminal` to release its resources.
+    //    - Switch back from the alternate screen, disable mouse capture.
+    drop(terminal); // drop TUI
+    drop(_raw_guard); // drop raw mode
+
+    let mut stdout = io::stdout();
     execute!(stdout, LeaveAlternateScreen, DisableMouseCapture)?;
 
-    // Return any errors
-    if let Err(err) = res {
-        eprintln!("Error: {err}");
-    }
+    // 7) Print a friendly exit message on the standard buffer
+    print!("Goodbye!{}", LINE_ENDING);
+
     Ok(())
 }
 
 ////////////////////////////////////////////////////////////////////////////////
-// TUI Event Loop
+// TUI App Loop
 ////////////////////////////////////////////////////////////////////////////////
 
+/// Runs the main TUI event loop. The user can type in a name and press Enter,
+/// receiving a random greeting. Press Esc or Ctrl+C to exit.
 fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> {
     let mut app = App::new();
 
-    // We’ll keep polling user keystrokes until Esc or Ctrl+C is pressed.
     loop {
-        // 1) Draw the current state of the UI
+        // 1) Draw the UI with the current state
         terminal.draw(|frame| {
-            draw_ui(frame, &app);
+            draw_main_ui(frame, &app);
         })?;
 
-        // 2) Non-blocking poll for events. We'll wait ~100ms to reduce CPU usage
+        // 2) Check for key events (poll ~100ms)
         if crossterm::event::poll(Duration::from_millis(100))? {
-            // If there's an event, read it
             if let Event::Key(key_event) = event::read()? {
                 match key_event.code {
-                    //-------------------------------------------
-                    // Typing characters (with no modifiers)
-                    //-------------------------------------------
+                    // Typing characters
                     KeyCode::Char(c) if key_event.modifiers.is_empty() => {
                         app.input.push(c);
                     }
-
-                    //-------------------------------------------
-                    // Ctrl+C => exit
-                    //-------------------------------------------
-                    KeyCode::Char('c') if key_event.modifiers.contains(KeyModifiers::CONTROL) => {
-                        break;
-                    }
-
-                    //-------------------------------------------
                     // Backspace
-                    //-------------------------------------------
                     KeyCode::Backspace => {
                         app.input.pop();
                     }
-
-                    //-------------------------------------------
-                    // Enter => generate a new greeting
-                    //-------------------------------------------
+                    // Enter => generate a random greeting
                     KeyCode::Enter => {
-                        if app.input.trim().is_empty() {
-                            app.greeting = pick_random_greeting("World");
+                        let name = if app.input.trim().is_empty() {
+                            "World"
                         } else {
-                            app.greeting = pick_random_greeting(app.input.trim());
-                        }
-                        // Clear the input for a new name
+                            app.input.trim()
+                        };
+                        app.greeting = pick_random_greeting(name);
                         app.input.clear();
                     }
-
-                    //-------------------------------------------
-                    // ESC => exit
-                    //-------------------------------------------
-                    KeyCode::Esc => {
+                    // Esc or Ctrl+C => exit
+                    KeyCode::Esc | KeyCode::Char('c')
+                        if key_event.modifiers.contains(KeyModifiers::CONTROL) =>
+                    {
                         break;
                     }
-
-                    //-------------------------------------------
-                    // Ignore other keys
-                    //-------------------------------------------
                     _ => {}
                 }
             }
@@ -171,64 +199,129 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> 
 }
 
 ////////////////////////////////////////////////////////////////////////////////
-// UI Drawing
+// Draw the Welcome Screen
 ////////////////////////////////////////////////////////////////////////////////
 
-fn draw_ui(frame: &mut tui::Frame<CrosstermBackend<io::Stdout>>, app: &App) {
-    let screen = frame.size();
+/// Draws an initial “Welcome” TUI with a FIGlet-based ASCII art banner.
+fn draw_welcome_screen(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> {
+    terminal.draw(|frame| {
+        let size = frame.area();
 
-    // A single "centered window" block with a border
+        // Draw a simple block as background
+        let block = Block::default()
+            .title(" Welcome to the Multilingual Ratatui CLI! ")
+            .borders(Borders::ALL);
+        frame.render_widget(block, size);
+
+        // Create a FIGlet ASCII banner
+        let fig_font = FIGfont::standard().expect("Failed to load standard FIGfont");
+        let figure = fig_font
+            .convert("Hello, Ratatui!")
+            .expect("Failed to render FIGlet text");
+        let banner_str = figure.to_string();
+
+        // We'll place the ASCII banner text in the center
+        let text_area = centered_rect(80, 60, size);
+        let paragraph = Paragraph::new(
+            banner_str
+                .lines()
+                .map(|line| {
+                    Line::from(Span::styled(
+                        line.to_string(),
+                        Style::default()
+                            .fg(Color::Cyan)
+                            .add_modifier(Modifier::BOLD),
+                    ))
+                })
+                .collect::<Vec<_>>(),
+        )
+        .alignment(Alignment::Center);
+
+        frame.render_widget(paragraph, text_area);
+    })?;
+    Ok(())
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// Draw the Main UI
+////////////////////////////////////////////////////////////////////////////////
+
+/// Draws the core TUI: instructions, current input, and random greeting display.
+/// Note: Must specify `'_` lifetime for `Frame`.
+fn draw_main_ui(frame: &mut Frame<'_, CrosstermBackend<io::Stdout>>, app: &App) {
+    let screen = frame.area();
+
+    // Outer border
     let main_block = Block::default()
         .title(" Multilingual Greeter ")
         .borders(Borders::ALL);
     frame.render_widget(main_block, screen);
 
-    // Carve out a smaller inner rect
-    let inner = inner_rect(screen);
+    // Inside, we define an inner region
+    let inner = centered_rect(80, 60, screen);
 
-    // Inside that block, we split into 3 vertical sections:
-    //   1) instructions
-    //   2) input
-    //   3) greeting
+    // Create vertical chunks: instructions, input, greeting
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .margin(1)
         .constraints([
             Constraint::Length(3), // instructions
-            Constraint::Length(3), // input
+            Constraint::Length(3), // typed input
             Constraint::Length(3), // greeting
         ])
         .split(inner);
 
     // 1) Instructions
-    let instructions = "Type a name & press Enter. Press Esc or Ctrl+C to exit.";
-    let instructions_para = Paragraph::new(instructions)
-        .alignment(Alignment::Center)
-        .style(Style::default().fg(Color::Cyan));
-    frame.render_widget(instructions_para, chunks[0]);
+    let instructions = Paragraph::new("Type a name & press Enter. Press Esc or Ctrl+C to exit.")
+        .style(Style::default().fg(Color::Yellow))
+        .alignment(Alignment::Center);
+    frame.render_widget(instructions, chunks[0]);
 
     // 2) Current input
     let input_label = format!("Name: {}", app.input);
     let input_para = Paragraph::new(input_label)
-        .alignment(Alignment::Left)
-        .style(Style::default().fg(Color::Yellow));
+        .style(Style::default().fg(Color::Green))
+        .alignment(Alignment::Left);
     frame.render_widget(input_para, chunks[1]);
 
-    // 3) Greeting
-    //   Convert &app.greeting to a string slice
+    // 3) Greeting (with random color)
     let greeting_para = Paragraph::new(app.greeting.as_str())
-        .alignment(Alignment::Center)
-        .style(Style::default().fg(random_tui_color()));
+        .style(Style::default().fg(random_ratatui_color()))
+        .alignment(Alignment::Center);
     frame.render_widget(greeting_para, chunks[2]);
 }
 
-/// Helper: returns an "inner rectangle" to avoid text overlapping the border.
-fn inner_rect(area: Rect) -> Rect {
+////////////////////////////////////////////////////////////////////////////////
+// Helper: Centered Rect
+////////////////////////////////////////////////////////////////////////////////
+
+/// Returns a sub-rectangle of `area`, with the given `percent_x` and `percent_y`
+/// sized portion centered in the parent rectangle.
+fn centered_rect(percent_x: u16, percent_y: u16, area: Rect) -> Rect {
+    // Split vertically: top blank space, center chunk, bottom blank space
+    let layout = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints(
+            [
+                Constraint::Percentage((100 - percent_y) / 2),
+                Constraint::Percentage(percent_y),
+                Constraint::Percentage((100 - percent_y) / 2),
+            ]
+            .as_ref(),
+        )
+        .split(area);
+
+    // The middle region
+    let middle = layout[1];
+    // Compute the actual width for x-centering
+    let box_width = middle.width * percent_x / 100;
+    let x_offset = middle.x + (middle.width.saturating_sub(box_width)) / 2;
+
     Rect {
-        x: area.x + 1,
-        y: area.y + 1,
-        width: area.width.saturating_sub(2),
-        height: area.height.saturating_sub(2),
+        x: x_offset,
+        y: middle.y,
+        width: box_width,
+        height: middle.height,
     }
 }
 
@@ -236,6 +329,8 @@ fn inner_rect(area: Rect) -> Rect {
 // Greeting Logic
 ////////////////////////////////////////////////////////////////////////////////
 
+/// Picks a random greeting from a large set of languages, and returns
+/// a formatted greeting with the user’s `name`.
 fn pick_random_greeting(name: &str) -> String {
     let greetings = [
         "Mandarin Chinese: 你好 (Nǐ hǎo)",
@@ -298,10 +393,11 @@ fn pick_random_greeting(name: &str) -> String {
 }
 
 ////////////////////////////////////////////////////////////////////////////////
-// Random TUI Color
+// Random Ratatui Color
 ////////////////////////////////////////////////////////////////////////////////
 
-fn random_tui_color() -> Color {
+/// Selects a random `ratatui::style::Color` for the greeting text.
+fn random_ratatui_color() -> Color {
     use Color::*;
     let colors = [Red, Green, Yellow, Blue, Magenta, Cyan, White, Gray];
     let mut rng = rand::thread_rng();
